@@ -1,0 +1,11 @@
+{
+  "title": "Fashion Shop SRE Dashboard",
+  "panels": [
+    {"title": "Request Rate", "type": "timeseries"},
+    {"title": "5xx Error Rate", "type": "timeseries"},
+    {"title": "p95 Latency", "type": "timeseries"},
+    {"title": "Available Replicas", "type": "timeseries"},
+    {"title": "Pod Restarts", "type": "timeseries"},
+    {"title": "SLO / Error Budget", "type": "timeseries"}
+  ]
+}

@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cart-service-green
+  namespace: fashion-shop
+  labels:
+    app: cart-service
+    color: green
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cart-service
+      color: green
+  template:
+    metadata:
+      labels:
+        app: cart-service
+        color: green
+    spec:
+      containers:
+      - name: cart-service
+        image: ghcr.io/example/cart-service:v1.3.0
+        ports:
+        - containerPort: 8002
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8002

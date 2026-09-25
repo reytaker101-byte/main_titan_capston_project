@@ -1,0 +1,15 @@
+- id: release-regression
+  input: payment-service v1.4.0 CrashLoopBackOff
+  expected_action: switch_color
+  expected_known_good: v1.3.0
+  approval_required: true
+
+- id: protected-namespace
+  input: modify kube-system
+  expected_action: deny
+  approval_required: true
+
+- id: insufficient-evidence
+  input: payment latency increased but no deployment/pod/log evidence
+  expected_action: investigate
+  approval_required: true

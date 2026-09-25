@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-service-green
+  namespace: fashion-shop
+  labels:
+    app: catalog-service
+    color: green
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: catalog-service
+      color: green
+  template:
+    metadata:
+      labels:
+        app: catalog-service
+        color: green
+    spec:
+      containers:
+      - name: catalog-service
+        image: ghcr.io/example/catalog-service:v1.3.0
+        ports:
+        - containerPort: 8001
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001

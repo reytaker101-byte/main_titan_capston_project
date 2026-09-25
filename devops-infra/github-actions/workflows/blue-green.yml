@@ -1,0 +1,114 @@
+name: Blue-Green Environment Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - prod
+      target_color:
+        description: "Blue/Green slot"
+        required: true
+        type: choice
+        options:
+          - blue
+          - green
+      action:
+        description: "Operation"
+        required: true
+        type: choice
+        options:
+          - deploy
+          - switch
+          - rollback
+      service:
+        description: "Microservice"
+        required: true
+        type: choice
+        options:
+          - catalog-service
+          - cart-service
+          - order-service
+          - payment-service
+      image_tag:
+        description: "Release tag"
+        required: true
+        default: "v1.4.0"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Color:       ${{ inputs.target_color }}"
+          echo "Action:      ${{ inputs.action }}"
+          echo "Service:     ${{ inputs.service }}"
+          echo "Image tag:   ${{ inputs.image_tag }}"
+
+          if [[ "${{ inputs.environment }}" == "prod" && "${{ inputs.action }}" == "switch" ]]; then
+            echo "Production traffic switch detected."
+            echo "GitHub Environment protection must require an approved reviewer."
+          fi
+
+  deploy-inactive-slot:
+    needs: validate
+    if: inputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy selected color
+        run: |
+          echo "Deploying ${{ inputs.service }}:${{ inputs.image_tag }}"
+          echo "Environment=${{ inputs.environment }}"
+          echo "Color=${{ inputs.target_color }}"
+          echo "In the real pipeline, update the environment/color manifest and let Argo CD reconcile."
+
+      - name: Smoke test
+        run: |
+          echo "Run health endpoint + readiness + smoke tests here."
+
+  switch-traffic:
+    needs: validate
+    if: inputs.action == 'switch'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Production approval boundary
+        run: |
+          echo "Traffic switch requested."
+          echo "For prod, configure GitHub Environment required reviewers."
+          echo "The AI safety layer must also have approved the mutation."
+
+      - name: Switch active color
+        run: |
+          echo "kubectl patch service ..."
+          echo "Switch ${{ inputs.service }} -> ${{ inputs.target_color }}"
+
+  rollback:
+    needs: validate
+    if: inputs.action == 'rollback'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rollback
+        run: |
+          echo "Rollback requested for ${{ inputs.service }}"
+          echo "The real implementation selects the evidence-backed known-good color/tag."
+          echo "Do not blindly assume previous tag == known-good."
