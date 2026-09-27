@@ -15,12 +15,17 @@ jobs:
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Verify GCP authentication
         run: |
+          echo "Checking GCP authentication..."
           gcloud auth list
-          gcloud config set project "${{ vars.GCP_PROJECT_ID }}"
+
+          echo "Setting GCP project..."
+          gcloud config set project "${{ secrets.GCP_PROJECT_ID }}"
+
+          echo "Checking Artifact Registry..."
           gcloud artifacts repositories list \
             --location=asia-southeast1
