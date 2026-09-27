@@ -233,7 +233,172 @@ Purpose
 * Validate SLO degradation.
 * Provide performance evidence to AI-SRE.
 
-Setup
+-----
+
+9. GCP <-> Github authentication
+
+Permissions → Select a role
+
+For our first step, select:
+
+Artifact Registry → Artifact Registry Writer
+
+This gives GitHub Actions permission to push Docker images to your Artifact Registry.
+
+<img width="1350" height="404" alt="image" src="https://github.com/user-attachments/assets/e3f201f6-482b-4d79-a122-59fd906878e3" />
+
+Principals with access
+
+Leave it completely empty.
+
+We don’t need to add any user/group here.
+
+Then click:
+
+Done
+
+Then under IAM and Access
+Workload Identity Federation
+
+It’s the option just below Roles.
+
+Then you’ll get the Workload Identity Pools page.
+
+GCP <-> GitHub Actions Workload Identity Federation - FINAL CONFIGURATION
+
+1. GCP PROJECT
+   Project name: My First Project
+   Project ID: project-361c9ab3-160b-49e3-915
+   Project number: 490747278866
+
+2. SERVICE ACCOUNT
+   Service account name: github-deployer
+   Service account email:
+   github-deployer@project-361c9ab3-160b-49e3-915.iam.gserviceaccount.com
+
+   Service account role:
+   Artifact Registry Writer
+
+   IMPORTANT:
+   Service Account Admin = REMOVED
+   Workload Identity User = KEPT
+
+3. WORKLOAD IDENTITY POOL
+   Pool name: github-pool
+   Pool ID: github-pool
+   Description: Github actions authentication
+   Status: Enabled
+
+4. OIDC PROVIDER
+   Provider type: OpenID Connect (OIDC)
+   Provider name: github-actions
+   Provider ID: github-actions
+
+   Issuer URL:
+   https://token.actions.githubusercontent.com
+
+   JWK file:
+   Empty
+
+   Audience:
+   Default audience
+
+5. ATTRIBUTE MAPPING
+   Mapping 1:
+   Google attribute: google.subject
+   OIDC attribute: assertion.sub
+
+   Mapping 2:
+   Google attribute: attribute.repository
+   OIDC attribute: assertion.repository
+
+6. ATTRIBUTE CONDITION
+   assertion.repository == 'reytaker101-byte/main_titan_capston_project'
+
+   This restricts authentication to:
+   reytaker101-byte/main_titan_capston_project
+
+7. SERVICE ACCOUNT ACCESS / PRINCIPAL
+   Principal:
+   principalSet://iam.googleapis.com/projects/490747278866/locations/global/workloadIdentityPools/github-pool/attribute.repository/reytaker101-byte/main_titan_capston_project
+
+   Role:
+   Workload Identity User
+
+   IAM condition on Workload Identity User:
+   None
+
+8. GITHUB REPOSITORY
+   Repository:
+   reytaker101-byte/main_titan_capston_project
+
+   Repository URL:
+   https://github.com/reytaker101-byte/main_titan_capston_project.git
+
+9. GITHUB ACTIONS SECRETS
+   These were created under:
+   GitHub -> Settings -> Secrets and variables -> Actions -> Secrets
+
+   GCP_PROJECT_ID
+   = project-361c9ab3-160b-49e3-915
+
+   GCP_SERVICE_ACCOUNT
+   = github-deployer@project-361c9ab3-160b-49e3-915.iam.gserviceaccount.com
+
+   GCP_WIF_PROVIDER
+   = projects/490747278866/locations/global/workloadIdentityPools/github-pool/providers/github-actions
+
+10. GITHUB WORKFLOW PERMISSIONS
+    permissions:
+      contents: read
+      id-token: write
+
+11. GITHUB AUTHENTICATION STEP
+    uses:
+      google-github-actions/auth@v2
+
+    Authentication:
+      workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+      service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+12. VERIFICATION
+    GCP Authentication Test successfully reached Artifact Registry.
+
+    Verified repository:
+    main-titan-capston-project-artifactory-repo
+
+    Location:
+    asia-southeast1
+
+    Format:
+    DOCKER
+
+    Therefore the following flow is WORKING:
+
+    GitHub Actions
+          |
+          | GitHub OIDC token
+          v
+    github-actions OIDC Provider
+          |
+          v
+    github-pool
+          |
+          | repository restriction
+          v
+    reytaker101-byte/main_titan_capston_project
+          |
+          v
+    github-deployer Service Account
+          |
+          | Artifact Registry Writer
+          v
+    main-titan-capston-project-artifactory-repo
+
+    STATUS: GITHUB -> GCP FEDERATION VERIFIED SUCCESSFULLY
+
+
+------
 
 1. Created/logged into BlazeMeter.
 2. Application load tests will be created after services are deployed.
