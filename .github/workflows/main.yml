@@ -41,10 +41,10 @@ jobs:
 
 
   # ==========================================================
-  # BUILD AND PUSH DOCKER IMAGES
+  # BUILD AND PUSH TO DEV
   # ==========================================================
   build-and-push:
-    name: Build and Push Images
+    name: Build and Push Images to DEV
     needs: codeql
     runs-on: ubuntu-latest
 
@@ -56,6 +56,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ------------------------------------------------------
+      # Validate image version
+      # ------------------------------------------------------
       - name: Validate image tag
         run: |
           echo "Validating image tag: $IMAGE_TAG"
@@ -66,68 +69,101 @@ jobs:
             exit 1
           fi
 
-          echo "Image tag is valid: $IMAGE_TAG"
+          echo "Image tag is valid."
 
+      # ------------------------------------------------------
+      # Authenticate to GCP
+      # ------------------------------------------------------
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
+      # ------------------------------------------------------
+      # Configure Docker
+      # ------------------------------------------------------
       - name: Configure Docker for Artifact Registry
         run: |
           gcloud auth configure-docker \
-            $GCP_REGION-docker.pkg.dev \
+            ${{ env.GCP_REGION }}-docker.pkg.dev \
             --quiet
 
+      # ------------------------------------------------------
+      # Build catalog-service
+      # ------------------------------------------------------
       - name: Build catalog-service
         run: |
           docker build \
-            -t $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/$GAR_REPOSITORY/catalog-service:$IMAGE_TAG \
+            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/catalog-service:${IMAGE_TAG} \
             ./services/catalog-service
 
+      # ------------------------------------------------------
+      # Build cart-service
+      # ------------------------------------------------------
       - name: Build cart-service
         run: |
           docker build \
-            -t $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/$GAR_REPOSITORY/cart-service:$IMAGE_TAG \
+            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/cart-service:${IMAGE_TAG} \
             ./services/cart-service
 
+      # ------------------------------------------------------
+      # Build order-service
+      # ------------------------------------------------------
       - name: Build order-service
         run: |
           docker build \
-            -t $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/$GAR_REPOSITORY/order-service:$IMAGE_TAG \
+            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/order-service:${IMAGE_TAG} \
             ./services/order-service
 
+      # ------------------------------------------------------
+      # Build payment-service
+      # ------------------------------------------------------
       - name: Build payment-service
         run: |
           docker build \
-            -t $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/$GAR_REPOSITORY/payment-service:$IMAGE_TAG \
+            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/payment-service:${IMAGE_TAG} \
             ./services/payment-service
 
-      - name: Push catalog-service
+      # ------------------------------------------------------
+      # Push catalog-service
+      # ------------------------------------------------------
+      - name: Push catalog-service to DEV
         run: |
           docker push \
-            $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/$GAR_REPOSITORY/catalog-service:$IMAGE_TAG
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/catalog-service:${IMAGE_TAG}
 
-      - name: Push cart-service
+      # ------------------------------------------------------
+      # Push cart-service
+      # ------------------------------------------------------
+      - name: Push cart-service to DEV
         run: |
           docker push \
-            $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/$GAR_REPOSITORY/cart-service:$IMAGE_TAG
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/cart-service:${IMAGE_TAG}
 
-      - name: Push order-service
+      # ------------------------------------------------------
+      # Push order-service
+      # ------------------------------------------------------
+      - name: Push order-service to DEV
         run: |
           docker push \
-            $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/$GAR_REPOSITORY/order-service:$IMAGE_TAG
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/order-service:${IMAGE_TAG}
 
-      - name: Push payment-service
+      # ------------------------------------------------------
+      # Push payment-service
+      # ------------------------------------------------------
+      - name: Push payment-service to DEV
         run: |
           docker push \
-            $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/$GAR_REPOSITORY/payment-service:$IMAGE_TAG
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/payment-service:${IMAGE_TAG}
 
-      - name: Verify images
+      # ------------------------------------------------------
+      # Verify DEV images
+      # ------------------------------------------------------
+      - name: Verify DEV images
         run: |
           echo "=========================================="
-          echo "Verifying images"
+          echo "DEV IMAGES"
           echo "Version: $IMAGE_TAG"
           echo "=========================================="
 
@@ -137,16 +173,16 @@ jobs:
             order-service \
             payment-service
           do
-            IMAGE="$GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/$GAR_REPOSITORY/$SERVICE:$IMAGE_TAG"
+            IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/$SERVICE:${IMAGE_TAG}"
 
             echo ""
-            echo "Checking: $IMAGE"
+            echo "Verifying:"
+            echo "$IMAGE"
 
             gcloud artifacts docker images describe "$IMAGE"
           done
 
           echo ""
           echo "=========================================="
-          echo "BUILD AND PUSH SUCCESSFUL"
-          echo "Version: $IMAGE_TAG"
+          echo "DEV IMAGE BUILD AND PUSH SUCCESSFUL"
           echo "=========================================="
