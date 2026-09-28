@@ -131,8 +131,6 @@ jobs:
 
           for SERVICE in \
             catalog-service \
-            cart-service \
-            order-service \
             payment-service
           do
 
@@ -169,8 +167,6 @@ jobs:
 
           for SERVICE in \
             catalog-service \
-            cart-service \
-            order-service \
             payment-service
           do
 
@@ -209,8 +205,6 @@ jobs:
 
           for SERVICE in \
             catalog-service \
-            cart-service \
-            order-service \
             payment-service
           do
 
@@ -266,8 +260,6 @@ jobs:
 
           for SERVICE in \
             catalog-service \
-            cart-service \
-            order-service \
             payment-service
           do
 
@@ -308,8 +300,6 @@ jobs:
 
           for SERVICE in \
             catalog-service \
-            cart-service \
-            order-service \
             payment-service
           do
 
