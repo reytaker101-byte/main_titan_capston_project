@@ -4,9 +4,10 @@ metadata:
   name: catalog-service
   namespace: fashion-shop
 spec:
+  type: LoadBalancer
   selector:
     app: catalog-service
     color: green
   ports:
-  - port: 8001
-    targetPort: 8001
+    - port: 80
+      targetPort: 8001
