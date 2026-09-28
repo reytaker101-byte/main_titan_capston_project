@@ -1,4 +1,4 @@
-name: Bootstrap Argo CD
+name: 3.Bootstrap Argo CD
 
 on:
   workflow_dispatch:
