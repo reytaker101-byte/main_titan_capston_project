@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -81,7 +82,7 @@ jobs:
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       # ------------------------------------------------------
-      # Configure Docker
+      # Configure Docker for Artifact Registry
       # ------------------------------------------------------
       - name: Configure Docker for Artifact Registry
         run: |
@@ -110,6 +111,7 @@ jobs:
       # ------------------------------------------------------
       # Build order-service
       # ------------------------------------------------------
+      - name: Build order-service
       - name: Build order-service
         run: |
           docker build \
