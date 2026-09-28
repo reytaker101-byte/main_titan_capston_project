@@ -13,7 +13,7 @@ on:
           - prod
 
       image_tag:
-        description: "Image version to promote, e.g. v1.0.0"
+        description: "Existing image version to promote, e.g. v1.0.0"
         required: true
         type: string
         default: "v1.0.0"
@@ -78,7 +78,10 @@ jobs:
       # --------------------------------------------------
       - name: Verify source images
         run: |
-          echo "Checking source images..."
+          echo "=========================================="
+          echo "Checking source images"
+          echo "Version: ${{ inputs.image_tag }}"
+          echo "=========================================="
 
           for SERVICE in \
             catalog-service \
@@ -93,17 +96,17 @@ jobs:
             echo "Checking:"
             echo "$IMAGE"
 
-            gcloud artifacts docker images describe "$IMAGE"
-
-            if [ $? -ne 0 ]; then
-              echo "ERROR: Image does not exist: $IMAGE"
+            if ! gcloud artifacts docker images describe "$IMAGE"; then
+              echo ""
+              echo "ERROR: Source image does not exist:"
+              echo "$IMAGE"
               exit 1
             fi
 
           done
 
           echo ""
-          echo "All source images exist."
+          echo "All four source images exist."
 
       # --------------------------------------------------
       # 6. Promote images
@@ -112,6 +115,7 @@ jobs:
         run: |
           echo "=========================================="
           echo "Starting Image Promotion"
+          echo "=========================================="
           echo "Environment : ${{ inputs.environment }}"
           echo "Version     : ${{ inputs.image_tag }}"
           echo "=========================================="
@@ -173,6 +177,7 @@ jobs:
           echo ""
           echo "=========================================="
           echo "PROMOTION VERIFIED SUCCESSFULLY"
+          echo "=========================================="
           echo "Environment : ${{ inputs.environment }}"
           echo "Version     : ${{ inputs.image_tag }}"
           echo "=========================================="
