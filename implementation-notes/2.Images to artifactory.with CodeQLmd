@@ -1,0 +1,127 @@
+# 2. Images to Artifact Registry
+
+## Objective
+Established a secure, automated CI pipeline that builds the four microservice Docker images, performs a CodeQL security scan, authenticates to Google Cloud using Workload Identity Federation, pushes the images into Google Artifact Registry under the DEV environment, and verifies the resulting images and SHA256 digests.
+
+## Flow
+GitHub Repository
+       ↓
+GitHub Actions
+       ↓
+CodeQL Security Scan          ✅
+       ↓
+Docker Build                  ✅
+       ↓
+GCP WIF Authentication       ✅
+       ↓
+Artifact Registry             ✅
+       ↓
+DEV Image Repositories        ✅
+       ↓
+Image/Digest Verification     ✅
+
+## Artifact Registry
+- Repository: main-titan-capston-project-artifactory-repo
+- Location: asia-southeast1
+- Format: Docker
+
+## Services
+- catalog-service
+- cart-service
+- order-service
+- payment-service
+
+## Implementation
+1. Created a GitHub Actions workflow: .github/workflows/main.yml
+2. Configured manual workflow execution
+    * Added workflow_dispatch so the workflow can be triggered manually from GitHub Actions.
+3. Granted required GitHub Actions permissions
+    * contents: read
+    * id-token: write
+    * id-token: write is required for GCP Workload Identity Federation.
+4. Checked out the GitHub repository
+    * Used actions/checkout@v4
+    * This downloads the project source code into the GitHub Actions runner.
+5. Authenticated GitHub Actions with GCP
+    * Used google-github-actions/auth@v2
+    * Authentication was done using Workload Identity Federation (WIF).
+    * No GCP service-account private key/JSON key was stored in GitHub.
+6. Configured Docker authentication for Artifact Registry
+    * Configured Docker to authenticate with:
+        asia-southeast1-docker.pkg.dev
+6.5. CodeQL
+    Checkout
+     ↓
+    CodeQL Security Scan
+     ↓
+    Docker Build
+     ↓
+    Push to DEV
+     ↓
+    Verify      
+7. Built the four Docker images
+    * catalog-service:v1.0.0
+    * cart-service:v1.0.0
+    * order-service:v1.0.0
+    * payment-service:v1.0.0
+8. Tagged the images with the GCP Artifact Registry path
+    * Example: asia-southeast1-docker.pkg.dev/<PROJECT_ID>/<REPOSITORY>/catalog-service:v1.0.0
+9. Pushed all four images to Google Artifact Registry
+    * All four Docker pushes completed successfully.
+10. Verified the images in Artifact Registry
+    * GitHub Actions executed gcloud artifacts docker images list.
+    * It confirmed all four images exist in the repository.
+11. Verified image digests
+    * Each image received a SHA256 digest, confirming the pushed image manifests.
+12. Credentials were cleaned up after the job
+    * The temporary GCP credentials file created during the workflow was removed during post-job cleanup.
+
+<img width="1540" height="808" alt="image" src="https://github.com/user-attachments/assets/2af8a327-8548-42f5-a490-7ad07e167e8b" />
+
+<img width="1548" height="236" alt="image" src="https://github.com/user-attachments/assets/73ea5121-2ffe-493e-8f82-a5c248394cd0" />
+
+**What does “promoting an image” mean?**
+Take the exact same tested image and move it through further environments. 
+Build once
+   ↓
+payment-service:v1.0.0
+   ↓
+Artifact Registry
+   ↓
+DEV
+   ↓  testing
+STAGE
+   ↓  validation
+PROD
+
+
+DEV
+catalog-service:v1.0.0
+cart-service:v1.0.0
+order-service:v1.0.0
+payment-service:v1.0.0
+Same v1.0.0
+    |
+  Stage
+    |
+   Prod
+
+
+Google Cloud Console: Artifact Registry
+
+Images for main-titan-capston-project-artifactory-repo
+
+Repository details
+Format: Docker
+Type: Standard
+
+Name                    Connection    Created          Updated
+-----------------------------------------------------------------------
+dev/cart-service         —             6 minutes ago    6 minutes ago
+dev/catalog-service      —             6 minutes ago    6 minutes ago
+dev/order-service        —             6 minutes ago    6 minutes ago
+dev/payment-service      —             6 minutes ago    6 minutes ago
+
+
+## Status
+Done
