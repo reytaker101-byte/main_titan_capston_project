@@ -3,20 +3,18 @@ name: Promote Image
 on:
   workflow_dispatch:
     inputs:
-      environment:
+      target_environment:
         description: "Target environment"
         required: true
         type: choice
         options:
-          - dev
           - stage
           - prod
 
       image_tag:
-        description: "Existing image version to promote, e.g. v1.0.0"
+        description: "Existing image version to promote"
         required: true
         type: string
-        default: "v1.0.0"
 
 permissions:
   contents: read
@@ -27,60 +25,96 @@ env:
   GAR_REPOSITORY: main-titan-capston-project-artifactory-repo
 
 jobs:
+
+  # ==========================================================
+  # IMAGE PROMOTION
+  # ==========================================================
   promote:
+    name: Promote Image
     runs-on: ubuntu-latest
+
+    env:
+      TARGET_ENV: ${{ inputs.target_environment }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
 
     steps:
 
-      # --------------------------------------------------
+      # ------------------------------------------------------
       # 1. Checkout repository
-      # --------------------------------------------------
+      # ------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
-      # 2. Authenticate to GCP using Workload Identity
-      # --------------------------------------------------
+      # ------------------------------------------------------
+      # 2. Validate image tag
+      # ------------------------------------------------------
+      - name: Validate image tag
+        run: |
+          echo "Validating image tag: $IMAGE_TAG"
+
+          if [[ ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Invalid image tag."
+            echo "Expected format: v<major>.<minor>.<patch>"
+            echo "Example: v1.0.0"
+            exit 1
+          fi
+
+          echo "Image tag format is valid."
+
+      # ------------------------------------------------------
+      # 3. Determine source environment
+      # ------------------------------------------------------
+      - name: Determine source environment
+        run: |
+          if [[ "$TARGET_ENV" == "stage" ]]; then
+            SOURCE_ENV="dev"
+
+          elif [[ "$TARGET_ENV" == "prod" ]]; then
+            SOURCE_ENV="stage"
+
+          else
+            echo "ERROR: Invalid target environment."
+            exit 1
+          fi
+
+          echo "SOURCE_ENV=$SOURCE_ENV" >> "$GITHUB_ENV"
+
+          echo "=========================================="
+          echo "PROMOTION PATH"
+          echo "=========================================="
+          echo "Source      : $SOURCE_ENV"
+          echo "Target      : $TARGET_ENV"
+          echo "Version     : $IMAGE_TAG"
+          echo "=========================================="
+
+      # ------------------------------------------------------
+      # 4. Authenticate to GCP using Workload Identity
+      # ------------------------------------------------------
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      # --------------------------------------------------
-      # 3. Configure Docker for Artifact Registry
-      # --------------------------------------------------
+      # ------------------------------------------------------
+      # 5. Configure Docker for Artifact Registry
+      # ------------------------------------------------------
       - name: Configure Docker for Artifact Registry
         run: |
           gcloud auth configure-docker \
             ${{ env.GCP_REGION }}-docker.pkg.dev \
             --quiet
 
-      # --------------------------------------------------
-      # 4. Validate image tag format
-      # --------------------------------------------------
-      - name: Validate image tag
-        run: |
-          IMAGE_TAG="${{ inputs.image_tag }}"
-
-          echo "Validating image tag: $IMAGE_TAG"
-
-          if [[ ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "ERROR: Invalid image tag."
-            echo "Expected format: v1.0.0"
-            exit 1
-          fi
-
-          echo "Image tag format is valid."
-
-      # --------------------------------------------------
-      # 5. Verify source images exist
-      # --------------------------------------------------
+      # ------------------------------------------------------
+      # 6. Verify source images
+      # ------------------------------------------------------
       - name: Verify source images
         run: |
           echo "=========================================="
-          echo "Checking source images"
-          echo "Version: ${{ inputs.image_tag }}"
+          echo "CHECKING SOURCE IMAGES"
+          echo "=========================================="
+          echo "Source environment: $SOURCE_ENV"
+          echo "Image version     : $IMAGE_TAG"
           echo "=========================================="
 
           for SERVICE in \
@@ -90,34 +124,31 @@ jobs:
             payment-service
           do
 
-            IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/$SERVICE:${{ inputs.image_tag }}"
+            SOURCE_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/$SOURCE_ENV/$SERVICE:$IMAGE_TAG"
 
             echo ""
             echo "Checking:"
-            echo "$IMAGE"
+            echo "$SOURCE_IMAGE"
 
-            if ! gcloud artifacts docker images describe "$IMAGE"; then
+            if ! gcloud artifacts docker images describe "$SOURCE_IMAGE"; then
               echo ""
               echo "ERROR: Source image does not exist:"
-              echo "$IMAGE"
+              echo "$SOURCE_IMAGE"
               exit 1
             fi
 
           done
 
           echo ""
-          echo "All four source images exist."
+          echo "All source images exist."
 
-      # --------------------------------------------------
-      # 6. Promote images
-      # --------------------------------------------------
-      - name: Promote images
+      # ------------------------------------------------------
+      # 7. Capture source image digests
+      # ------------------------------------------------------
+      - name: Capture source image digests
         run: |
           echo "=========================================="
-          echo "Starting Image Promotion"
-          echo "=========================================="
-          echo "Environment : ${{ inputs.environment }}"
-          echo "Version     : ${{ inputs.image_tag }}"
+          echo "SOURCE IMAGE DIGESTS"
           echo "=========================================="
 
           for SERVICE in \
@@ -127,9 +158,40 @@ jobs:
             payment-service
           do
 
-            SOURCE_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/$SERVICE:${{ inputs.image_tag }}"
+            SOURCE_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/$SOURCE_ENV/$SERVICE:$IMAGE_TAG"
 
-            TARGET_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/$SERVICE:${{ inputs.environment }}-${{ inputs.image_tag }}"
+            DIGEST=$(gcloud artifacts docker images describe \
+              "$SOURCE_IMAGE" \
+              --format='value(image_summary.digest)')
+
+            echo "$SERVICE"
+            echo "Digest: $DIGEST"
+
+          done
+
+      # ------------------------------------------------------
+      # 8. Promote images
+      # ------------------------------------------------------
+      - name: Promote images
+        run: |
+          echo "=========================================="
+          echo "STARTING IMAGE PROMOTION"
+          echo "=========================================="
+          echo "Source      : $SOURCE_ENV"
+          echo "Target      : $TARGET_ENV"
+          echo "Version     : $IMAGE_TAG"
+          echo "=========================================="
+
+          for SERVICE in \
+            catalog-service \
+            cart-service \
+            order-service \
+            payment-service
+          do
+
+            SOURCE_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/$SOURCE_ENV/$SERVICE:$IMAGE_TAG"
+
+            TARGET_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/$TARGET_ENV/$SERVICE:$IMAGE_TAG"
 
             echo ""
             echo "Service : $SERVICE"
@@ -144,16 +206,16 @@ jobs:
 
           echo ""
           echo "=========================================="
-          echo "Image promotion completed."
+          echo "IMAGE PROMOTION COMPLETED"
           echo "=========================================="
 
-      # --------------------------------------------------
-      # 7. Verify promoted images
-      # --------------------------------------------------
-      - name: Verify promoted images
+      # ------------------------------------------------------
+      # 9. Verify target images
+      # ------------------------------------------------------
+      - name: Verify target images
         run: |
           echo "=========================================="
-          echo "Verifying promoted images"
+          echo "VERIFYING TARGET IMAGES"
           echo "=========================================="
 
           for SERVICE in \
@@ -163,14 +225,67 @@ jobs:
             payment-service
           do
 
-            PROMOTED_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/$SERVICE:${{ inputs.environment }}-${{ inputs.image_tag }}"
+            TARGET_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/$TARGET_ENV/$SERVICE:$IMAGE_TAG"
 
             echo ""
             echo "Verifying:"
-            echo "$PROMOTED_IMAGE"
+            echo "$TARGET_IMAGE"
 
-            gcloud artifacts docker images describe \
-              "$PROMOTED_IMAGE"
+            if ! gcloud artifacts docker images describe "$TARGET_IMAGE"; then
+              echo ""
+              echo "ERROR: Target image verification failed:"
+              echo "$TARGET_IMAGE"
+              exit 1
+            fi
+
+          done
+
+          echo ""
+          echo "All target images exist."
+
+      # ------------------------------------------------------
+      # 10. Verify source and target have the same digest
+      # ------------------------------------------------------
+      - name: Verify image digests
+        run: |
+          echo "=========================================="
+          echo "VERIFYING IMAGE DIGESTS"
+          echo "=========================================="
+
+          for SERVICE in \
+            catalog-service \
+            cart-service \
+            order-service \
+            payment-service
+          do
+
+            SOURCE_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/$SOURCE_ENV/$SERVICE:$IMAGE_TAG"
+
+            TARGET_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/$TARGET_ENV/$SERVICE:$IMAGE_TAG"
+
+            SOURCE_DIGEST=$(gcloud artifacts docker images describe \
+              "$SOURCE_IMAGE" \
+              --format='value(image_summary.digest)')
+
+            TARGET_DIGEST=$(gcloud artifacts docker images describe \
+              "$TARGET_IMAGE" \
+              --format='value(image_summary.digest)')
+
+            echo ""
+            echo "Service       : $SERVICE"
+            echo "Source        : $SOURCE_ENV"
+            echo "Target        : $TARGET_ENV"
+            echo "Source digest : $SOURCE_DIGEST"
+            echo "Target digest : $TARGET_DIGEST"
+
+            if [ "$SOURCE_DIGEST" != "$TARGET_DIGEST" ]; then
+              echo ""
+              echo "ERROR: Digest mismatch!"
+              echo "The promoted image does not match the source image."
+              exit 1
+            fi
+
+            echo "Digest verification: PASSED"
 
           done
 
@@ -178,6 +293,8 @@ jobs:
           echo "=========================================="
           echo "PROMOTION VERIFIED SUCCESSFULLY"
           echo "=========================================="
-          echo "Environment : ${{ inputs.environment }}"
-          echo "Version     : ${{ inputs.image_tag }}"
+          echo "Source      : $SOURCE_ENV"
+          echo "Target      : $TARGET_ENV"
+          echo "Version     : $IMAGE_TAG"
+          echo "Same digest : YES"
           echo "=========================================="
