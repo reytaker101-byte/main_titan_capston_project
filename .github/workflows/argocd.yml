@@ -90,23 +90,8 @@ jobs:
           kubectl apply \
             -f devops-infra/argocd/application.yaml
 
-      # 10. Verify Argo CD Application
-      - name: Verify Argo CD Application
+      # 10. Expose Argo CD UI
+      - name: Expose Argo CD server
         run: |
-          echo "=========================================="
-          echo "ARGO CD APPLICATION"
-          echo "=========================================="
-
-          kubectl get application \
-            fashion-shop \
-            -n argocd
-
-          echo ""
-          echo "=========================================="
-          echo "APPLICATION DETAILS"
-          echo "=========================================="
-
-          kubectl get application \
-            fashion-shop \
-            -n argocd \
-            -o wide
+          kubectl apply \
+            -f devops-infra/argocd/argocd-server-service.yaml
