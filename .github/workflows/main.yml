@@ -6,6 +6,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  security-events: write
 
 env:
   GCP_REGION: asia-southeast1
@@ -13,7 +14,33 @@ env:
   IMAGE_TAG: v1.0.0
 
 jobs:
+
+  # ==========================================================
+  # CODEQL SECURITY SCAN
+  # ==========================================================
+  codeql:
+    name: CodeQL Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+
+  # ==========================================================
+  # BUILD AND PUSH DOCKER IMAGES
+  # ==========================================================
   build-and-push:
+    name: Build and Push Images
+    needs: codeql
     runs-on: ubuntu-latest
 
     steps:
