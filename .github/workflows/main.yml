@@ -1,0 +1,80 @@
+name: Build and Push Images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_REGION: asia-southeast1
+  GAR_REPOSITORY: main-titan-capston-project-artifactory-repo
+  IMAGE_TAG: v1.0.0
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build catalog-service
+        run: |
+          docker build \
+            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/catalog-service:${{ env.IMAGE_TAG }} \
+            ./services/catalog-service
+
+      - name: Build cart-service
+        run: |
+          docker build \
+            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/cart-service:${{ env.IMAGE_TAG }} \
+            ./services/cart-service
+
+      - name: Build order-service
+        run: |
+          docker build \
+            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/order-service:${{ env.IMAGE_TAG }} \
+            ./services/order-service
+
+      - name: Build payment-service
+        run: |
+          docker build \
+            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/payment-service:${{ env.IMAGE_TAG }} \
+            ./services/payment-service
+
+      - name: Push catalog-service
+        run: |
+          docker push \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/catalog-service:${{ env.IMAGE_TAG }}
+
+      - name: Push cart-service
+        run: |
+          docker push \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/cart-service:${{ env.IMAGE_TAG }}
+
+      - name: Push order-service
+        run: |
+          docker push \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/order-service:${{ env.IMAGE_TAG }}
+
+      - name: Push payment-service
+        run: |
+          docker push \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/payment-service:${{ env.IMAGE_TAG }}
+
+      - name: Verify images
+        run: |
+          gcloud artifacts docker images list \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}
