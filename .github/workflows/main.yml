@@ -120,26 +120,6 @@ jobs:
 
 
       # ------------------------------------------------------
-      # Build cart-service
-      # ------------------------------------------------------
-      - name: Build cart-service
-        run: |
-          docker build \
-            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/cart-service:${IMAGE_TAG} \
-            ./services/cart-service
-
-
-      # ------------------------------------------------------
-      # Build order-service
-      # ------------------------------------------------------
-      - name: Build order-service
-        run: |
-          docker build \
-            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/order-service:${IMAGE_TAG} \
-            ./services/order-service
-
-
-      # ------------------------------------------------------
       # Build payment-service
       # ------------------------------------------------------
       - name: Build payment-service
@@ -160,24 +140,6 @@ jobs:
         run: |
           docker push \
             ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/catalog-service:${IMAGE_TAG}
-
-
-      # ------------------------------------------------------
-      # Push cart-service
-      # ------------------------------------------------------
-      - name: Push cart-service to DEV
-        run: |
-          docker push \
-            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/cart-service:${IMAGE_TAG}
-
-
-      # ------------------------------------------------------
-      # Push order-service
-      # ------------------------------------------------------
-      - name: Push order-service to DEV
-        run: |
-          docker push \
-            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/order-service:${IMAGE_TAG}
 
 
       # ------------------------------------------------------
@@ -206,8 +168,6 @@ jobs:
 
           for SERVICE in \
             catalog-service \
-            cart-service \
-            order-service \
             payment-service
           do
 
