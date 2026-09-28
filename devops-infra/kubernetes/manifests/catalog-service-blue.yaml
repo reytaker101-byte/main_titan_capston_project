@@ -7,7 +7,7 @@ metadata:
     app: catalog-service
     color: blue
 spec:
-  replicas: 2
+  replicas: 0
   selector:
     matchLabels:
       app: catalog-service
