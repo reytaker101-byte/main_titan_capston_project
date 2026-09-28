@@ -1,0 +1,112 @@
+name: Bootstrap Argo CD
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: asia-southeast1
+  GKE_CLUSTER: main-titan-capston-project-cluster
+
+jobs:
+  install-argocd:
+    name: Install Argo CD
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # 1. Get repository files
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Authenticate GitHub Actions with GCP
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # 3. Get credentials for the existing GKE cluster
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GCP_REGION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      # 4. Verify GKE connection
+      - name: Verify GKE connection
+        run: |
+          echo "Checking GKE cluster..."
+          kubectl cluster-info
+          echo ""
+          echo "Current namespaces:"
+          kubectl get namespaces
+
+      # 5. Create Argo CD namespace
+      - name: Create Argo CD namespace
+        run: |
+          kubectl create namespace argocd \
+            --dry-run=client \
+            -o yaml | kubectl apply -f -
+
+      # 6. Install pinned Argo CD version
+      - name: Install Argo CD
+        run: |
+          kubectl apply \
+            -n argocd \
+            -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.1.9/manifests/install.yaml
+
+      # 7. Wait for Argo CD components
+      - name: Wait for Argo CD
+        run: |
+          kubectl wait \
+            --namespace argocd \
+            --for=condition=Available \
+            deployment/argocd-server \
+            --timeout=300s
+
+      # 8. Verify Argo CD components
+      - name: Verify Argo CD
+        run: |
+          echo "=========================================="
+          echo "ARGO CD PODS"
+          echo "=========================================="
+          kubectl get pods -n argocd
+
+          echo ""
+          echo "=========================================="
+          echo "ARGO CD SERVICES"
+          echo "=========================================="
+          kubectl get svc -n argocd
+
+      # 9. Register the GitHub application definition
+      - name: Apply Argo CD Application
+        run: |
+          kubectl apply \
+            -f devops-infra/argocd/application.yaml
+
+      # 10. Verify Argo CD Application
+      - name: Verify Argo CD Application
+        run: |
+          echo "=========================================="
+          echo "ARGO CD APPLICATION"
+          echo "=========================================="
+
+          kubectl get application \
+            fashion-shop \
+            -n argocd
+
+          echo ""
+          echo "=========================================="
+          echo "APPLICATION DETAILS"
+          echo "=========================================="
+
+          kubectl get application \
+            fashion-shop \
+            -n argocd \
+            -o wide
