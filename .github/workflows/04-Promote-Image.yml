@@ -1,0 +1,169 @@
+name: 04 - Promote Image
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      source_environment:
+        description: "Source environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - pilot
+
+      target_environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - stage
+          - pilot
+          - fleet
+
+      image_tag:
+        description: "Existing image tag"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: asia-southeast1
+  GAR_REPOSITORY: main-titan-capston-project-artifactory-repo
+
+jobs:
+
+  promote:
+    name: Promote Image
+    runs-on: ubuntu-latest
+
+    env:
+      SOURCE_ENV: ${{ inputs.source_environment }}
+      TARGET_ENV: ${{ inputs.target_environment }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate promotion path
+        run: |
+
+          case "${SOURCE_ENV}:${TARGET_ENV}" in
+
+            dev:stage)
+              echo "Promotion: DEV -> STAGE"
+              ;;
+
+            stage:pilot)
+              echo "Promotion: STAGE -> PILOT"
+              ;;
+
+            pilot:fleet)
+              echo "Promotion: PILOT -> FLEET/PROD"
+              ;;
+
+            *)
+              echo "Invalid promotion path:"
+              echo "${SOURCE_ENV} -> ${TARGET_ENV}"
+              exit 1
+              ;;
+
+          esac
+
+      - name: Validate image tag
+        run: |
+
+          if [[ ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid image tag."
+            exit 1
+          fi
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker
+        run: |
+
+          gcloud auth configure-docker \
+            "${GCP_REGION}-docker.pkg.dev" \
+            --quiet
+
+      - name: Promote payment-service
+        run: |
+
+          SOURCE_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/${SOURCE_ENV}/payment-service:${IMAGE_TAG}"
+
+          TARGET_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/${TARGET_ENV}/payment-service:${IMAGE_TAG}"
+
+          echo "=========================================="
+          echo "IMAGE PROMOTION"
+          echo "=========================================="
+
+          echo "Source:"
+          echo "$SOURCE_IMAGE"
+
+          echo ""
+          echo "Target:"
+          echo "$TARGET_IMAGE"
+
+          echo ""
+          echo "Checking source image..."
+
+          gcloud artifacts docker images describe \
+            "$SOURCE_IMAGE"
+
+          echo ""
+          echo "Pulling source..."
+
+          docker pull "$SOURCE_IMAGE"
+
+          echo ""
+          echo "Tagging target..."
+
+          docker tag \
+            "$SOURCE_IMAGE" \
+            "$TARGET_IMAGE"
+
+          echo ""
+          echo "Pushing target..."
+
+          docker push "$TARGET_IMAGE"
+
+          echo ""
+          echo "Verifying digests..."
+
+          SOURCE_DIGEST=$(gcloud artifacts docker images describe \
+            "$SOURCE_IMAGE" \
+            --format='value(image_summary.digest)')
+
+          TARGET_DIGEST=$(gcloud artifacts docker images describe \
+            "$TARGET_IMAGE" \
+            --format='value(image_summary.digest)')
+
+          echo ""
+          echo "Source digest:"
+          echo "$SOURCE_DIGEST"
+
+          echo ""
+          echo "Target digest:"
+          echo "$TARGET_DIGEST"
+
+          if [ "$SOURCE_DIGEST" != "$TARGET_DIGEST" ]; then
+            echo "ERROR: Digest mismatch!"
+            exit 1
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "PROMOTION VERIFIED"
+          echo "=========================================="
