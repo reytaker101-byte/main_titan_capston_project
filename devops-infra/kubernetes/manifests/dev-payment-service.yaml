@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: payment-service
-          image: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo/dev/payment-service:__IMAGE_TAG__
+          image: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo/dev/payment-service:v1.1.0
           ports:
             - containerPort: 8004
           readinessProbe:
