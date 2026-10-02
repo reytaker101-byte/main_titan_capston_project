@@ -119,6 +119,16 @@ jobs:
             ./services/payment-service
 
 
+      # ------------------------------------------------------
+      # Build release-dashboard
+      # ------------------------------------------------------
+      - name: Build release-dashboard
+        run: |
+          docker build \
+            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/release-dashboard:${IMAGE_TAG} \
+            ./release-dashboard
+
+
       # ======================================================
       # PUSH IMAGES TO DEV
       # ======================================================
@@ -130,6 +140,15 @@ jobs:
         run: |
           docker push \
             ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/payment-service:${IMAGE_TAG}
+
+
+      # ------------------------------------------------------
+      # Push release-dashboard
+      # ------------------------------------------------------
+      - name: Push release-dashboard to DEV
+        run: |
+          docker push \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/release-dashboard:${IMAGE_TAG}
 
 
       # ======================================================
@@ -148,7 +167,8 @@ jobs:
           echo "=========================================="
 
           for SERVICE in \
-            payment-service
+            payment-service \
+            release-dashboard
           do
 
             IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/$SERVICE:${IMAGE_TAG}"
