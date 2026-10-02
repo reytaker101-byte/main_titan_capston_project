@@ -2,8 +2,6 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-import os
-import re
 from datetime import datetime, timezone
 
 
@@ -11,40 +9,73 @@ app = FastAPI(title="AI-SRE Release Dashboard")
 
 
 # ============================================================
-# CONFIGURATION
+# DASHBOARD ENVIRONMENT CONFIGURATION
 # ============================================================
 
-REFRESH_SECONDS = 15
+# Order intentionally follows the reference dashboard:
+#
+# PRODUCTION:
+#   fleet-green | fleet-blue | pilot-green | pilot-blue
+#
+# PRE-PRODUCTION:
+#   stage-green | stage-blue | dev
 
-ENVIRONMENTS = [
+COLUMNS = [
     {
-        "name": "DEV",
-        "namespace": "ai-sre-dev",
-        "mode": "single",
-        "blue_deployment": "payment-service",
-        "green_deployment": None,
+        "key": "fleet-green",
+        "label": "fleet-green",
+        "group": "production",
+        "namespace": "ai-sre-fleet",
+        "deployment": "payment-service-green",
+        "color": "green",
+    },
+    {
+        "key": "fleet-blue",
+        "label": "fleet-blue",
+        "group": "production",
+        "namespace": "ai-sre-fleet",
+        "deployment": "payment-service-blue",
         "color": "blue",
     },
     {
-        "name": "STAGE",
-        "namespace": "ai-sre-stage",
-        "mode": "blue-green",
-        "blue_deployment": "payment-service-blue",
-        "green_deployment": "payment-service-green",
-    },
-    {
-        "name": "PILOT",
+        "key": "pilot-green",
+        "label": "pilot-green",
+        "group": "production",
         "namespace": "ai-sre-pilot",
-        "mode": "blue-green",
-        "blue_deployment": "payment-service-blue",
-        "green_deployment": "payment-service-green",
+        "deployment": "payment-service-green",
+        "color": "green",
     },
     {
-        "name": "FLEET / PROD",
-        "namespace": "ai-sre-fleet",
-        "mode": "blue-green",
-        "blue_deployment": "payment-service-blue",
-        "green_deployment": "payment-service-green",
+        "key": "pilot-blue",
+        "label": "pilot-blue",
+        "group": "production",
+        "namespace": "ai-sre-pilot",
+        "deployment": "payment-service-blue",
+        "color": "blue",
+    },
+    {
+        "key": "stage-green",
+        "label": "stage-green",
+        "group": "pre-production",
+        "namespace": "ai-sre-stage",
+        "deployment": "payment-service-green",
+        "color": "green",
+    },
+    {
+        "key": "stage-blue",
+        "label": "stage-blue",
+        "group": "pre-production",
+        "namespace": "ai-sre-stage",
+        "deployment": "payment-service-blue",
+        "color": "blue",
+    },
+    {
+        "key": "dev",
+        "label": "dev",
+        "group": "pre-production",
+        "namespace": "ai-sre-dev",
+        "deployment": "payment-service",
+        "color": "blue",
     },
 ]
 
@@ -53,44 +84,35 @@ ENVIRONMENTS = [
 # KUBERNETES CLIENT
 # ============================================================
 
-def get_kubernetes_clients():
-    """
-    Load Kubernetes configuration.
-
-    In Kubernetes:
-        load_incluster_config()
-
-    For local development:
-        load_kube_config()
-    """
+def get_kubernetes_client():
 
     try:
+        # Running inside Kubernetes
         config.load_incluster_config()
+
     except Exception:
+
         try:
+            # Running locally
             config.load_kube_config()
+
         except Exception:
             return None, None
 
-    return client.AppsV1Api(), client.CoreV1Api()
+    apps_api = client.AppsV1Api()
+    core_api = client.CoreV1Api()
+
+    return apps_api, core_api
 
 
 # ============================================================
-# HELPERS
+# IMAGE TAG
 # ============================================================
 
-def extract_image_tag(image):
-    """
-    Extract image tag from:
-
-    asia-southeast1-docker.pkg.dev/.../payment-service:v1.1.0
-
-    Returns:
-        v1.1.0
-    """
+def get_image_tag(image):
 
     if not image:
-        return "—"
+        return "NA"
 
     if ":" not in image:
         return image
@@ -98,90 +120,154 @@ def extract_image_tag(image):
     return image.rsplit(":", 1)[-1]
 
 
-def deployment_status(deployment):
-    """
-    Convert Kubernetes Deployment state into dashboard state.
-    """
+# ============================================================
+# DEPLOYMENT STATUS
+# ============================================================
 
-    if deployment is None:
+def read_deployment(apps_api, column):
+
+    namespace = column["namespace"]
+    deployment_name = column["deployment"]
+
+    try:
+
+        deployment = apps_api.read_namespaced_deployment(
+            name=deployment_name,
+            namespace=namespace,
+        )
+
+    except ApiException as exc:
+
+        if exc.status == 404:
+
+            return {
+                "exists": False,
+                "tag": "NA",
+                "status": "NA",
+                "health": "NA",
+                "ready": 0,
+                "desired": 0,
+                "class": "na",
+            }
+
         return {
-            "image": "—",
-            "tag": "—",
-            "status": "N/A",
-            "pods": "0/0",
-            "health": "N/A",
-            "health_class": "na",
+            "exists": False,
+            "tag": "ERROR",
+            "status": "ERROR",
+            "health": "ERROR",
+            "ready": 0,
+            "desired": 0,
+            "class": "error",
         }
 
-    replicas = deployment.spec.replicas or 0
+    except Exception:
+
+        return {
+            "exists": False,
+            "tag": "ERROR",
+            "status": "ERROR",
+            "health": "ERROR",
+            "ready": 0,
+            "desired": 0,
+            "class": "error",
+        }
+
+
+    desired = deployment.spec.replicas or 0
 
     ready = deployment.status.ready_replicas or 0
 
-    images = []
 
-    for container in deployment.spec.template.spec.containers or []:
-        if container.image:
-            images.append(container.image)
+    image = None
 
-    image = images[0] if images else None
-    tag = extract_image_tag(image)
+    containers = (
+        deployment.spec.template.spec.containers
+        if deployment.spec.template.spec
+        else []
+    )
 
-    if replicas == 0:
+    if containers:
+
+        image = containers[0].image
+
+
+    tag = get_image_tag(image)
+
+
+    # --------------------------------------------------------
+    # NO REPLICAS
+    # --------------------------------------------------------
+
+    if desired == 0:
+
         return {
-            "image": image or "—",
+            "exists": True,
             "tag": tag,
             "status": "INACTIVE",
-            "pods": f"{ready}/{replicas}",
-            "health": "N/A",
-            "health_class": "na",
+            "health": "INACTIVE",
+            "ready": ready,
+            "desired": desired,
+            "class": "inactive",
         }
 
-    if ready == replicas:
+
+    # --------------------------------------------------------
+    # HEALTHY
+    # --------------------------------------------------------
+
+    if ready == desired:
+
         return {
-            "image": image or "—",
+            "exists": True,
             "tag": tag,
             "status": "ACTIVE",
-            "pods": f"{ready}/{replicas}",
-            "health": "HEALTHY",
-            "health_class": "healthy",
+            "health": "UP",
+            "ready": ready,
+            "desired": desired,
+            "class": "healthy",
         }
+
+
+    # --------------------------------------------------------
+    # PARTIALLY READY
+    # --------------------------------------------------------
 
     if ready > 0:
+
         return {
-            "image": image or "—",
+            "exists": True,
             "tag": tag,
             "status": "DEGRADED",
-            "pods": f"{ready}/{replicas}",
             "health": "DEGRADED",
-            "health_class": "warning",
+            "ready": ready,
+            "desired": desired,
+            "class": "warning",
         }
 
+
+    # --------------------------------------------------------
+    # FAILED
+    # --------------------------------------------------------
+
     return {
-        "image": image or "—",
+        "exists": True,
         "tag": tag,
-        "status": "FAILED",
-        "pods": f"{ready}/{replicas}",
-        "health": "FAILED",
-        "health_class": "error",
+        "status": "ERROR",
+        "health": "ERROR",
+        "ready": ready,
+        "desired": desired,
+        "class": "error",
     }
 
 
+# ============================================================
+# ACTIVE BLUE/GREEN COLOR
+# ============================================================
+
 def get_active_color(core_api, namespace):
-    """
-    Determine active Blue/Green color from the payment-service
-    Service selector.
-
-    Example:
-
-    selector:
-        app: payment-service
-        color: green
-
-    Returns:
-        blue / green
-    """
 
     try:
+
         service = core_api.read_namespaced_service(
             name="payment-service",
             namespace=namespace,
@@ -191,218 +277,127 @@ def get_active_color(core_api, namespace):
 
         color = selector.get("color")
 
-        if color in ("blue", "green"):
+        if color in ["blue", "green"]:
             return color
 
-        return "blue"
-
-    except ApiException:
-        return "blue"
-
     except Exception:
-        return "blue"
+        pass
+
+    return None
 
 
-def get_environment_status(apps_api, core_api, environment):
-    """
-    Read Deployment + Service information for one environment.
-    """
+# ============================================================
+# BUILD DASHBOARD DATA
+# ============================================================
 
-    namespace = environment["namespace"]
+def build_dashboard_data():
 
-    active_color = "blue"
+    apps_api, core_api = get_kubernetes_client()
 
-    if environment["mode"] == "blue-green":
-        active_color = get_active_color(
-            core_api,
-            namespace,
-        )
-
-    # --------------------------------------------------------
-    # BLUE
-    # --------------------------------------------------------
-
-    try:
-        blue_deployment = apps_api.read_namespaced_deployment(
-            name=environment["blue_deployment"],
-            namespace=namespace,
-        )
-
-        blue = deployment_status(blue_deployment)
-
-    except ApiException as exc:
-
-        if exc.status == 404:
-            blue = deployment_status(None)
-        else:
-            blue = {
-                "image": "—",
-                "tag": "—",
-                "status": "ERROR",
-                "pods": "—",
-                "health": "ERROR",
-                "health_class": "error",
-            }
-
-    # --------------------------------------------------------
-    # GREEN
-    # --------------------------------------------------------
-
-    if environment["green_deployment"]:
-
-        try:
-            green_deployment = apps_api.read_namespaced_deployment(
-                name=environment["green_deployment"],
-                namespace=namespace,
-            )
-
-            green = deployment_status(green_deployment)
-
-        except ApiException as exc:
-
-            if exc.status == 404:
-                green = deployment_status(None)
-            else:
-                green = {
-                    "image": "—",
-                    "tag": "—",
-                    "status": "ERROR",
-                    "pods": "—",
-                    "health": "ERROR",
-                    "health_class": "error",
-                }
-
-    else:
-
-        green = {
-            "image": "—",
-            "tag": "—",
-            "status": "N/A",
-            "pods": "0/0",
-            "health": "N/A",
-            "health_class": "na",
-        }
-
-    # --------------------------------------------------------
-    # DEV
-    # --------------------------------------------------------
-
-    if environment["mode"] == "single":
-
-        environment_status = "HEALTHY"
-
-        if blue["health"] == "FAILED":
-            environment_status = "FAILED"
-
-        elif blue["health"] == "DEGRADED":
-            environment_status = "DEGRADED"
-
-        return {
-            "name": environment["name"],
-            "namespace": namespace,
-            "mode": environment["mode"],
-            "active_color": "blue",
-            "environment_status": environment_status,
-            "blue": blue,
-            "green": green,
-        }
-
-    # --------------------------------------------------------
-    # BLUE/GREEN
-    # --------------------------------------------------------
-
-    active = blue if active_color == "blue" else green
-
-    if active["health"] == "HEALTHY":
-        environment_status = "HEALTHY"
-
-    elif active["health"] == "DEGRADED":
-        environment_status = "DEGRADED"
-
-    elif active["health"] == "FAILED":
-        environment_status = "FAILED"
-
-    else:
-        environment_status = "UNKNOWN"
-
-    return {
-        "name": environment["name"],
-        "namespace": namespace,
-        "mode": environment["mode"],
-        "active_color": active_color,
-        "environment_status": environment_status,
-        "blue": blue,
-        "green": green,
-    }
-
-
-def get_dashboard_data():
-
-    apps_api, core_api = get_kubernetes_clients()
-
-    # --------------------------------------------------------
-    # Cluster unavailable
-    # --------------------------------------------------------
 
     if not apps_api or not core_api:
 
         return {
             "cluster_available": False,
-            "updated_at": datetime.now(timezone.utc).strftime(
-                "%Y-%m-%d %H:%M:%S UTC"
-            ),
-            "environments": [],
+            "updated_at": current_time(),
+            "columns": [],
         }
 
-    environments = []
 
-    for environment in ENVIRONMENTS:
+    data = {}
 
-        try:
+    # --------------------------------------------------------
+    # READ DEPLOYMENTS
+    # --------------------------------------------------------
 
-            status = get_environment_status(
-                apps_api,
-                core_api,
-                environment,
-            )
+    for column in COLUMNS:
 
-            environments.append(status)
+        status = read_deployment(
+            apps_api,
+            column,
+        )
 
-        except Exception as exc:
+        data[column["key"]] = status
 
-            environments.append(
-                {
-                    "name": environment["name"],
-                    "namespace": environment["namespace"],
-                    "mode": environment["mode"],
-                    "active_color": "blue",
-                    "environment_status": "ERROR",
-                    "blue": {
-                        "image": "—",
-                        "tag": "—",
-                        "status": "ERROR",
-                        "pods": "—",
-                        "health": "ERROR",
-                        "health_class": "error",
-                    },
-                    "green": {
-                        "image": "—",
-                        "tag": "—",
-                        "status": "ERROR",
-                        "pods": "—",
-                        "health": "ERROR",
-                        "health_class": "error",
-                    },
-                }
-            )
+
+    # --------------------------------------------------------
+    # READ ACTIVE COLORS
+    # --------------------------------------------------------
+
+    active_colors = {}
+
+    namespaces = {
+        "ai-sre-stage",
+        "ai-sre-pilot",
+        "ai-sre-fleet",
+    }
+
+
+    for namespace in namespaces:
+
+        active_colors[namespace] = get_active_color(
+            core_api,
+            namespace,
+        )
+
+
+    # --------------------------------------------------------
+    # ADD ACTIVE / INACTIVE INFORMATION
+    # --------------------------------------------------------
+
+    for column in COLUMNS:
+
+        key = column["key"]
+
+        namespace = column["namespace"]
+
+        color = column["color"]
+
+        status = data[key]
+
+
+        if column["deployment"] == "payment-service":
+
+            # DEV is always treated as the active environment
+            status["traffic"] = "ACTIVE"
+
+        else:
+
+            active_color = active_colors.get(namespace)
+
+            if active_color == color:
+
+                status["traffic"] = "ACTIVE"
+
+            else:
+
+                status["traffic"] = "INACTIVE"
+
 
     return {
         "cluster_available": True,
-        "updated_at": datetime.now(timezone.utc).strftime(
-            "%Y-%m-%d %H:%M:%S UTC"
-        ),
-        "environments": environments,
+        "updated_at": current_time(),
+        "columns": [
+            {
+                **column,
+                "status": data[column["key"]],
+            }
+            for column in COLUMNS
+        ],
     }
+
+
+# ============================================================
+# TIME
+# ============================================================
+
+def current_time():
+
+    return datetime.now(
+        timezone.utc
+    ).strftime(
+        "%Y-%m-%d %H:%M:%S UTC"
+    )
 
 
 # ============================================================
@@ -410,9 +405,22 @@ def get_dashboard_data():
 # ============================================================
 
 @app.get("/api/status")
-def api_status():
+def status():
 
-    return get_dashboard_data()
+    return build_dashboard_data()
+
+
+# ============================================================
+# HEALTH CHECK
+# ============================================================
+
+@app.get("/health")
+def health():
+
+    return {
+        "status": "ok",
+        "service": "release-dashboard",
+    }
 
 
 # ============================================================
@@ -426,7 +434,7 @@ def dashboard():
         """
 <!DOCTYPE html>
 
-<html lang="en">
+<html>
 
 <head>
 
@@ -450,35 +458,29 @@ def dashboard():
     box-sizing: border-box;
 }
 
+
 body {
 
     margin: 0;
 
-    padding: 24px;
+    padding: 22px;
 
-    background: #f4f7fb;
+    background: #f4f7f8;
 
     color: #172033;
 
     font-family:
-        -apple-system,
-        BlinkMacSystemFont,
-        "Segoe UI",
-        Roboto,
         Arial,
+        Helvetica,
         sans-serif;
 }
 
-
-/* ============================================================
-   PAGE
-   ============================================================ */
 
 .dashboard {
 
     max-width: 1700px;
 
-    margin: 0 auto;
+    margin: auto;
 }
 
 
@@ -494,59 +496,45 @@ body {
 
     align-items: center;
 
-    margin-bottom: 20px;
-
-    gap: 20px;
+    margin-bottom: 15px;
 }
 
-.title-area h1 {
+
+.title {
+
+    font-size: 29px;
+
+    font-weight: 800;
 
     margin: 0;
-
-    font-size: 30px;
-
-    font-weight: 750;
-
-    letter-spacing: -0.5px;
 }
 
-.title-area p {
 
-    margin: 6px 0 0;
+.subtitle {
+
+    margin-top: 5px;
 
     color: #667085;
 
-    font-size: 15px;
+    font-size: 14px;
 }
 
 
-.header-right {
-
-    display: flex;
-
-    align-items: center;
-
-    gap: 10px;
-}
-
-
-.refresh-box {
+.refresh {
 
     background: white;
 
-    border: 1px solid #dbe2ea;
+    border: 1px solid #d0d5dd;
 
-    border-radius: 10px;
+    padding: 10px 15px;
 
-    padding: 10px 14px;
+    border-radius: 8px;
 
-    color: #667085;
-
-    font-size: 13px;
+    font-size: 12px;
 }
 
 
-.refresh-indicator {
+.refresh-dot {
 
     display: inline-block;
 
@@ -558,7 +546,474 @@ body {
 
     background: #16a34a;
 
-    margin-right: 6px;
+    margin-right: 5px;
+}
+
+
+/* ============================================================
+   WARNING
+   ============================================================ */
+
+.warning {
+
+    display: none;
+
+    background: #fff7ed;
+
+    border: 1px solid #fed7aa;
+
+    color: #9a3412;
+
+    padding: 10px;
+
+    margin-bottom: 12px;
+
+    border-radius: 6px;
+
+    font-weight: 600;
+
+    font-size: 13px;
+}
+
+
+/* ============================================================
+   MATRIX
+   ============================================================ */
+
+.matrix-container {
+
+    background: white;
+
+    border: 1px solid #cfd6dd;
+
+    border-radius: 5px;
+
+    overflow-x: auto;
+
+    box-shadow:
+        0 2px 6px rgba(0,0,0,0.06);
+}
+
+
+.matrix {
+
+    width: 100%;
+
+    min-width: 1200px;
+
+    border-collapse: separate;
+
+    border-spacing: 3px;
+
+    background: #ffffff;
+
+    table-layout: fixed;
+}
+
+
+/* ============================================================
+   TOP LEFT
+   ============================================================ */
+
+.services-header {
+
+    width: 210px;
+
+    background: #168fd0;
+
+    color: white;
+
+    font-size: 15px;
+
+    font-weight: 800;
+
+    text-align: center;
+
+    height: 50px;
+}
+
+
+.environment-header {
+
+    width: 115px;
+
+    background: #168fd0;
+
+    color: white;
+
+    font-size: 14px;
+
+    font-weight: 800;
+
+    text-align: center;
+}
+
+
+/* ============================================================
+   GROUP HEADERS
+   ============================================================ */
+
+.production-header {
+
+    background: #56a83d;
+
+    color: white;
+
+    font-size: 14px;
+
+    font-weight: 800;
+
+    height: 34px;
+
+    text-align: center;
+
+    text-transform: uppercase;
+}
+
+
+.preproduction-header {
+
+    background: #56a83d;
+
+    color: white;
+
+    font-size: 14px;
+
+    font-weight: 800;
+
+    height: 34px;
+
+    text-align: center;
+
+    text-transform: uppercase;
+}
+
+
+/* ============================================================
+   COLUMN HEADERS
+   ============================================================ */
+
+.column-header {
+
+    height: 42px;
+
+    font-size: 11px;
+
+    font-weight: 800;
+
+    text-align: center;
+
+    text-transform: uppercase;
+
+    color: #263238;
+}
+
+
+.blue-column {
+
+    background: #dbeafe;
+
+    border-top: 4px solid #2563eb;
+}
+
+
+.green-column {
+
+    background: #dcfce7;
+
+    border-top: 4px solid #16a34a;
+}
+
+
+.dev-column {
+
+    background: #dbeafe;
+
+    border-top: 4px solid #2563eb;
+}
+
+
+/* ============================================================
+   ACTIVE STATUS HEADER
+   ============================================================ */
+
+.status-header {
+
+    height: 25px;
+
+    font-size: 10px;
+
+    font-weight: 800;
+
+    text-align: center;
+
+    text-transform: uppercase;
+}
+
+
+.status-blue {
+
+    background: #eff6ff;
+
+    color: #1d4ed8;
+}
+
+
+.status-green {
+
+    background: #f0fdf4;
+
+    color: #15803d;
+}
+
+
+.status-dev {
+
+    background: #eff6ff;
+
+    color: #1d4ed8;
+}
+
+
+/* ============================================================
+   SERVICE CELL
+   ============================================================ */
+
+.service-cell {
+
+    background: #eaf2f5;
+
+    min-height: 70px;
+
+    padding: 12px;
+
+    text-align: center;
+
+    font-weight: 800;
+
+    font-size: 14px;
+
+    color: #263238;
+}
+
+
+.service-name {
+
+    font-size: 15px;
+
+    font-weight: 800;
+}
+
+
+.service-type {
+
+    margin-top: 3px;
+
+    font-size: 10px;
+
+    font-weight: 600;
+
+    color: #667085;
+}
+
+
+/* ============================================================
+   ENVIRONMENT CELL
+   ============================================================ */
+
+.environment-cell {
+
+    background: #eef3f6;
+
+    text-align: center;
+
+    font-size: 12px;
+
+    font-weight: 800;
+
+    color: #344054;
+
+    padding: 8px;
+}
+
+
+/* ============================================================
+   STATUS CELLS
+   ============================================================ */
+
+.status-cell {
+
+    height: 95px;
+
+    padding: 8px;
+
+    text-align: center;
+
+    vertical-align: middle;
+
+    position: relative;
+}
+
+
+/* BLUE COLUMN */
+
+.cell-blue {
+
+    background: #eaf3ff;
+
+    border-left: 3px solid #2563eb;
+}
+
+
+/* GREEN COLUMN */
+
+.cell-green {
+
+    background: #eaf8ed;
+
+    border-left: 3px solid #16a34a;
+}
+
+
+/* DEV */
+
+.cell-dev {
+
+    background: #eaf3ff;
+
+    border-left: 3px solid #2563eb;
+}
+
+
+/* ============================================================
+   HEALTH COLORS
+   ============================================================ */
+
+.cell-healthy {
+
+    background: #dff3df;
+}
+
+
+.cell-inactive {
+
+    background: #edf1ee;
+}
+
+
+.cell-warning {
+
+    background: #fff1c7;
+}
+
+
+.cell-error {
+
+    background: #dc2f2f;
+
+    color: white;
+}
+
+
+.cell-na {
+
+    background: #e8eeea;
+
+    color: #5f6b64;
+}
+
+
+/* ============================================================
+   CELL CONTENT
+   ============================================================ */
+
+.version {
+
+    font-size: 15px;
+
+    font-weight: 800;
+
+    margin-bottom: 5px;
+}
+
+
+.health-line {
+
+    font-size: 11px;
+
+    font-weight: 700;
+
+    margin-bottom: 4px;
+}
+
+
+.traffic-line {
+
+    font-size: 10px;
+
+    font-weight: 800;
+
+    text-transform: uppercase;
+}
+
+
+.pod-line {
+
+    font-size: 10px;
+
+    margin-top: 3px;
+}
+
+
+/* ============================================================
+   STATUS BADGE
+   ============================================================ */
+
+.badge {
+
+    display: inline-block;
+
+    padding: 3px 7px;
+
+    border-radius: 3px;
+
+    font-size: 9px;
+
+    font-weight: 900;
+
+    margin-top: 4px;
+}
+
+
+.badge-active {
+
+    background: #dcfce7;
+
+    color: #166534;
+}
+
+
+.badge-inactive {
+
+    background: #fef3c7;
+
+    color: #92400e;
+}
+
+
+.badge-error {
+
+    background: #991b1b;
+
+    color: white;
+}
+
+
+.badge-na {
+
+    background: #d1d5db;
+
+    color: #4b5563;
 }
 
 
@@ -570,24 +1025,15 @@ body {
 
     display: flex;
 
-    align-items: center;
+    gap: 15px;
 
-    gap: 18px;
+    margin-top: 12px;
 
-    background: white;
+    font-size: 11px;
 
-    border: 1px solid #dbe2ea;
-
-    border-radius: 10px;
-
-    padding: 10px 14px;
-
-    margin-bottom: 14px;
-
-    font-size: 13px;
-
-    color: #475467;
+    color: #667085;
 }
+
 
 .legend-item {
 
@@ -595,439 +1041,45 @@ body {
 
     align-items: center;
 
-    gap: 6px;
+    gap: 5px;
 }
 
-.legend-dot {
 
-    width: 11px;
+.legend-box {
 
-    height: 11px;
+    width: 13px;
 
-    border-radius: 3px;
+    height: 13px;
+
+    border-radius: 2px;
 }
+
 
 .legend-blue {
-    background: #2563eb;
-}
-
-.legend-green {
-    background: #16a34a;
-}
-
-.legend-yellow {
-    background: #f59e0b;
-}
-
-.legend-red {
-    background: #dc2626;
-}
-
-.legend-grey {
-    background: #94a3b8;
-}
-
-
-/* ============================================================
-   MATRIX
-   ============================================================ */
-
-.matrix-wrapper {
-
-    background: white;
-
-    border: 1px solid #dbe2ea;
-
-    border-radius: 12px;
-
-    overflow-x: auto;
-
-    box-shadow:
-        0 2px 8px rgba(15, 23, 42, 0.04);
-}
-
-
-.matrix {
-
-    min-width: 1100px;
-
-    width: 100%;
-
-    border-collapse: collapse;
-
-    table-layout: fixed;
-}
-
-
-/* ============================================================
-   TABLE HEADER
-   ============================================================ */
-
-.matrix th,
-.matrix td {
-
-    border-right: 1px solid #e4e7ec;
-
-    border-bottom: 1px solid #e4e7ec;
-
-    vertical-align: middle;
-
-    text-align: center;
-}
-
-.matrix th:last-child,
-.matrix td:last-child {
-
-    border-right: none;
-}
-
-
-.matrix thead tr:first-child th {
-
-    height: 50px;
-}
-
-
-.service-header {
-
-    width: 180px;
-
-    background: #172b4d;
-
-    color: white;
-
-    font-size: 14px;
-
-    font-weight: 700;
-}
-
-
-.environment-header {
-
-    width: 130px;
-
-    background: #edf2f7;
-
-    color: #344054;
-
-    font-size: 14px;
-
-    font-weight: 700;
-}
-
-
-.blue-header {
-
-    background: #2563eb;
-
-    color: white;
-
-    font-size: 15px;
-
-    font-weight: 750;
-
-    padding: 12px;
-}
-
-
-.green-header {
-
-    background: #16a34a;
-
-    color: white;
-
-    font-size: 15px;
-
-    font-weight: 750;
-
-    padding: 12px;
-}
-
-
-/* ============================================================
-   SUB HEADERS
-   ============================================================ */
-
-.sub-header {
-
-    font-size: 12px;
-
-    font-weight: 700;
-
-    padding: 9px 5px;
-
-    color: #475467;
-}
-
-.blue-sub-header {
-
-    background: #eff6ff;
-}
-
-.green-sub-header {
-
-    background: #f0fdf4;
-}
-
-
-/* ============================================================
-   ENVIRONMENT CELL
-   ============================================================ */
-
-.environment-cell {
-
-    padding: 14px 10px;
-
-    text-align: left !important;
-
-    font-weight: 700;
-
-    background: #f8fafc;
-}
-
-
-.environment-name {
-
-    font-size: 15px;
-
-    color: #172033;
-}
-
-
-.environment-type {
-
-    margin-top: 5px;
-
-    font-size: 11px;
-
-    color: #667085;
-
-    font-weight: 500;
-}
-
-
-/* ============================================================
-   ENVIRONMENT ACCENTS
-   ============================================================ */
-
-.env-dev {
-
-    border-left: 5px solid #2563eb;
-}
-
-.env-stage {
-
-    border-left: 5px solid #7c3aed;
-}
-
-.env-pilot {
-
-    border-left: 5px solid #f59e0b;
-}
-
-.env-fleet {
-
-    border-left: 5px solid #dc2626;
-}
-
-
-/* ============================================================
-   DATA CELLS
-   ============================================================ */
-
-.data-cell {
-
-    padding: 12px 7px;
-
-    min-height: 110px;
-}
-
-
-.image-tag {
-
-    font-size: 13px;
-
-    font-weight: 700;
-
-    color: #344054;
-
-    margin-bottom: 8px;
-
-    word-break: break-word;
-}
-
-
-/* ============================================================
-   BADGES
-   ============================================================ */
-
-.badge {
-
-    display: inline-block;
-
-    padding: 5px 8px;
-
-    border-radius: 5px;
-
-    font-size: 10px;
-
-    font-weight: 800;
-
-    letter-spacing: 0.3px;
-}
-
-
-.badge-active {
-
-    color: #075985;
 
     background: #dbeafe;
 
-    border: 1px solid #93c5fd;
+    border-left: 3px solid #2563eb;
 }
 
 
-.badge-candidate {
+.legend-green {
 
-    color: #92400e;
+    background: #dcfce7;
 
-    background: #fef3c7;
-
-    border: 1px solid #fcd34d;
+    border-left: 3px solid #16a34a;
 }
 
 
-.badge-inactive {
+.legend-up {
 
-    color: #475467;
-
-    background: #f2f4f7;
-
-    border: 1px solid #d0d5dd;
+    background: #dff3df;
 }
 
 
-.badge-error {
+.legend-error {
 
-    color: #991b1b;
-
-    background: #fee2e2;
-
-    border: 1px solid #fca5a5;
-}
-
-
-/* ============================================================
-   PODS
-   ============================================================ */
-
-.pods {
-
-    font-size: 13px;
-
-    font-weight: 650;
-
-    color: #344054;
-}
-
-
-/* ============================================================
-   HEALTH
-   ============================================================ */
-
-.health {
-
-    display: inline-flex;
-
-    align-items: center;
-
-    gap: 5px;
-
-    margin-top: 7px;
-
-    font-size: 11px;
-
-    font-weight: 750;
-}
-
-
-.health-dot {
-
-    width: 8px;
-
-    height: 8px;
-
-    border-radius: 50%;
-}
-
-
-.health-healthy {
-
-    color: #15803d;
-}
-
-.health-healthy .health-dot {
-
-    background: #16a34a;
-}
-
-
-.health-warning {
-
-    color: #b45309;
-}
-
-.health-warning .health-dot {
-
-    background: #f59e0b;
-}
-
-
-.health-error {
-
-    color: #b91c1c;
-}
-
-.health-error .health-dot {
-
-    background: #dc2626;
-}
-
-
-.health-na {
-
-    color: #667085;
-}
-
-.health-na .health-dot {
-
-    background: #94a3b8;
-}
-
-
-/* ============================================================
-   ACTIVE CELL
-   ============================================================ */
-
-.active-blue {
-
-    background:
-        linear-gradient(
-            135deg,
-            #eff6ff,
-            #ffffff
-        );
-}
-
-
-.active-green {
-
-    background:
-        linear-gradient(
-            135deg,
-            #f0fdf4,
-            #ffffff
-        );
+    background: #dc2f2f;
 }
 
 
@@ -1037,65 +1089,24 @@ body {
 
 .footer {
 
-    display: flex;
-
-    justify-content: space-between;
-
-    margin-top: 14px;
+    margin-top: 10px;
 
     color: #667085;
 
-    font-size: 12px;
+    font-size: 11px;
 }
 
-
-/* ============================================================
-   CLUSTER WARNING
-   ============================================================ */
-
-.cluster-warning {
-
-    display: none;
-
-    background: #fff7ed;
-
-    border: 1px solid #fed7aa;
-
-    color: #9a3412;
-
-    padding: 12px 14px;
-
-    border-radius: 9px;
-
-    margin-bottom: 14px;
-
-    font-size: 13px;
-
-    font-weight: 600;
-}
-
-
-/* ============================================================
-   RESPONSIVE
-   ============================================================ */
 
 @media (max-width: 900px) {
 
     body {
-        padding: 12px;
+        padding: 10px;
     }
 
     .header {
         align-items: flex-start;
+        gap: 10px;
         flex-direction: column;
-    }
-
-    .title-area h1 {
-        font-size: 24px;
-    }
-
-    .legend {
-        flex-wrap: wrap;
     }
 }
 
@@ -1106,136 +1117,84 @@ body {
 
 <body>
 
+
 <div class="dashboard">
 
 
-    <!-- =====================================================
-         HEADER
-         ===================================================== -->
+    <!-- HEADER -->
 
     <div class="header">
 
-        <div class="title-area">
+        <div>
 
-            <h1>
+            <h1 class="title">
                 AI-SRE Release Dashboard
             </h1>
 
-            <p>
-                Service: <strong>payment-service</strong>
+            <div class="subtitle">
+
+                Service:
+                <strong>payment-service</strong>
+
                 &nbsp;•&nbsp;
+
                 GitOps Blue / Green Release Status
-            </p>
-
-        </div>
-
-
-        <div class="header-right">
-
-            <div class="refresh-box">
-
-                <span class="refresh-indicator"></span>
-
-                Auto-refresh:
-                <strong>15s</strong>
 
             </div>
 
         </div>
 
+
+        <div class="refresh">
+
+            <span class="refresh-dot"></span>
+
+            Auto-refresh:
+            <strong>15s</strong>
+
+        </div>
+
     </div>
 
 
-    <!-- =====================================================
-         CLUSTER WARNING
-         ===================================================== -->
+    <!-- WARNING -->
 
     <div
-        id="cluster-warning"
-        class="cluster-warning"
+        id="warning"
+        class="warning"
     >
 
-        ⚠ Kubernetes cluster is currently unavailable.
-        Dashboard will automatically retry.
+        ⚠ Kubernetes cluster unavailable.
+        Waiting for cluster connection...
 
     </div>
 
 
-    <!-- =====================================================
-         LEGEND
-         ===================================================== -->
+    <!-- MATRIX -->
 
-    <div class="legend">
-
-        <div class="legend-item">
-
-            <span class="legend-dot legend-blue"></span>
-
-            Blue = Active
-
-        </div>
-
-
-        <div class="legend-item">
-
-            <span class="legend-dot legend-green"></span>
-
-            Green = Candidate / Ready
-
-        </div>
-
-
-        <div class="legend-item">
-
-            <span class="legend-dot legend-yellow"></span>
-
-            Candidate / Waiting
-
-        </div>
-
-
-        <div class="legend-item">
-
-            <span class="legend-dot legend-red"></span>
-
-            Error
-
-        </div>
-
-
-        <div class="legend-item">
-
-            <span class="legend-dot legend-grey"></span>
-
-            N/A / Not Deployed
-
-        </div>
-
-    </div>
-
-
-    <!-- =====================================================
-         MATRIX
-         ===================================================== -->
-
-    <div class="matrix-wrapper">
+    <div class="matrix-container">
 
         <table class="matrix">
+
+
+            <!-- =================================================
+                 HEADER ROW 1
+                 ================================================= -->
 
             <thead>
 
                 <tr>
 
                     <th
-                        rowspan="2"
-                        class="service-header"
+                        rowspan="3"
+                        class="services-header"
                     >
                         SERVICES
                     </th>
 
 
                     <th
-                        rowspan="2"
+                        rowspan="3"
                         class="environment-header"
                     >
                         ENVIRONMENT
@@ -1244,55 +1203,91 @@ body {
 
                     <th
                         colspan="4"
-                        class="blue-header"
+                        class="production-header"
                     >
-                        BLUE DEPLOYMENT
+                        PRODUCTION
                     </th>
 
 
                     <th
-                        colspan="4"
-                        class="green-header"
+                        colspan="3"
+                        class="preproduction-header"
                     >
-                        GREEN DEPLOYMENT
+                        PRE-PRODUCTION
                     </th>
 
                 </tr>
 
 
+                <!-- =================================================
+                     HEADER ROW 2
+                     ================================================= -->
+
                 <tr>
 
-                    <th class="sub-header blue-sub-header">
-                        IMAGE TAG
+                    <th class="column-header green-column">
+                        FLEET-GREEN
                     </th>
 
-                    <th class="sub-header blue-sub-header">
-                        STATUS
+                    <th class="column-header blue-column">
+                        FLEET-BLUE
                     </th>
 
-                    <th class="sub-header blue-sub-header">
-                        PODS
+                    <th class="column-header green-column">
+                        PILOT-GREEN
                     </th>
 
-                    <th class="sub-header blue-sub-header">
-                        HEALTH
+                    <th class="column-header blue-column">
+                        PILOT-BLUE
                     </th>
 
-
-                    <th class="sub-header green-sub-header">
-                        IMAGE TAG
+                    <th class="column-header green-column">
+                        STAGE-GREEN
                     </th>
 
-                    <th class="sub-header green-sub-header">
-                        STATUS
+                    <th class="column-header blue-column">
+                        STAGE-BLUE
                     </th>
 
-                    <th class="sub-header green-sub-header">
-                        PODS
+                    <th class="column-header dev-column">
+                        DEV
                     </th>
 
-                    <th class="sub-header green-sub-header">
-                        HEALTH
+                </tr>
+
+
+                <!-- =================================================
+                     HEADER ROW 3
+                     ================================================= -->
+
+                <tr>
+
+                    <th class="status-header status-green">
+                        INACTIVE
+                    </th>
+
+                    <th class="status-header status-blue">
+                        ACTIVE
+                    </th>
+
+                    <th class="status-header status-green">
+                        ACTIVE
+                    </th>
+
+                    <th class="status-header status-blue">
+                        INACTIVE
+                    </th>
+
+                    <th class="status-header status-green">
+                        INACTIVE
+                    </th>
+
+                    <th class="status-header status-blue">
+                        ACTIVE
+                    </th>
+
+                    <th class="status-header status-dev">
+                        ACTIVE
                     </th>
 
                 </tr>
@@ -1300,36 +1295,75 @@ body {
             </thead>
 
 
-            <tbody id="matrix-body">
+            <!-- =================================================
+                 DATA
+                 ================================================= -->
 
-                <!-- JavaScript populates this -->
+            <tbody id="dashboard-body">
 
             </tbody>
+
 
         </table>
 
     </div>
 
 
-    <!-- =====================================================
-         FOOTER
-         ===================================================== -->
+    <!-- LEGEND -->
+
+    <div class="legend">
+
+        <div class="legend-item">
+
+            <span class="legend-box legend-blue"></span>
+
+            Blue deployment
+
+        </div>
+
+
+        <div class="legend-item">
+
+            <span class="legend-box legend-green"></span>
+
+            Green deployment
+
+        </div>
+
+
+        <div class="legend-item">
+
+            <span class="legend-box legend-up"></span>
+
+            Healthy / UP
+
+        </div>
+
+
+        <div class="legend-item">
+
+            <span class="legend-box legend-error"></span>
+
+            Error
+
+        </div>
+
+    </div>
+
+
+    <!-- FOOTER -->
 
     <div class="footer">
 
-        <div>
+        Last updated:
+        <strong id="updated">
+            —
+        </strong>
 
-            Last updated:
-            <strong id="updated-at">—</strong>
+        &nbsp; | &nbsp;
 
-        </div>
-
-        <div>
-
-            Source:
-            <strong>Kubernetes API / GitOps</strong>
-
-        </div>
+        Source:
+        Kubernetes API / Argo CD GitOps
 
     </div>
 
@@ -1340,202 +1374,203 @@ body {
 <script>
 
 /* ============================================================
-   DASHBOARD JAVASCRIPT
+   HTML ESCAPE
    ============================================================ */
 
 function escapeHtml(value) {
 
-    if (value === null || value === undefined) {
+    if (
+        value === null ||
+        value === undefined
+    ) {
+
         return "";
+
     }
 
+
     return String(value)
+
         .replaceAll("&", "&amp;")
+
         .replaceAll("<", "&lt;")
+
         .replaceAll(">", "&gt;")
+
         .replaceAll('"', "&quot;")
+
         .replaceAll("'", "&#039;");
 }
 
 
 /* ============================================================
-   ENVIRONMENT CLASS
+   CELL CLASS
    ============================================================ */
 
-function environmentClass(name) {
+function getCellClass(column) {
 
-    if (name === "DEV") {
-        return "env-dev";
+    const status =
+        column.status || {};
+
+
+    if (status.class === "error") {
+
+        return "cell-error";
+
     }
 
-    if (name === "STAGE") {
-        return "env-stage";
+
+    if (status.class === "warning") {
+
+        return "cell-warning";
+
     }
 
-    if (name === "PILOT") {
-        return "env-pilot";
+
+    if (status.class === "inactive") {
+
+        return "cell-inactive";
+
     }
 
-    return "env-fleet";
+
+    if (status.class === "healthy") {
+
+        return "cell-healthy";
+
+    }
+
+
+    return "cell-na";
 }
 
 
 /* ============================================================
-   HEALTH HTML
+   BADGE
    ============================================================ */
 
-function healthHtml(item) {
+function getBadge(column) {
 
-    const health = item.health || "N/A";
+    const status =
+        column.status || {};
 
-    let healthClass = "health-na";
-
-    if (item.health_class === "healthy") {
-        healthClass = "health-healthy";
-    }
-
-    if (item.health_class === "warning") {
-        healthClass = "health-warning";
-    }
-
-    if (item.health_class === "error") {
-        healthClass = "health-error";
-    }
-
-    return `
-        <div class="health ${healthClass}">
-
-            <span class="health-dot"></span>
-
-            ${escapeHtml(health)}
-
-        </div>
-    `;
-}
-
-
-/* ============================================================
-   STATUS BADGE
-   ============================================================ */
-
-function statusBadge(status, color) {
-
-    status = status || "N/A";
-
-    let className = "badge-inactive";
-
-    if (status === "ACTIVE") {
-
-        className =
-            color === "blue"
-                ? "badge-active"
-                : "badge-candidate";
-    }
-
-    if (status === "INACTIVE") {
-        className = "badge-inactive";
-    }
 
     if (
-        status === "FAILED" ||
-        status === "ERROR"
+        status.status === "ACTIVE"
     ) {
-        className = "badge-error";
+
+        return `
+            <span class="badge badge-active">
+                UP
+            </span>
+        `;
     }
 
-    if (status === "DEGRADED") {
-        className = "badge-candidate";
+
+    if (
+        status.status === "INACTIVE"
+    ) {
+
+        return `
+            <span class="badge badge-inactive">
+                INACTIVE
+            </span>
+        `;
     }
+
+
+    if (
+        status.status === "ERROR"
+    ) {
+
+        return `
+            <span class="badge badge-error">
+                ERROR
+            </span>
+        `;
+    }
+
 
     return `
-        <span class="badge ${className}">
-            ${escapeHtml(status)}
+        <span class="badge badge-na">
+            NA
         </span>
     `;
 }
 
 
 /* ============================================================
-   DEPLOYMENT CELL
+   CELL
    ============================================================ */
 
-function deploymentCells(item, color, activeColor) {
+function renderCell(column) {
 
-    if (!item) {
-
-        return `
-            <td class="data-cell">
-                —
-            </td>
-
-            <td class="data-cell">
-                —
-            </td>
-
-            <td class="data-cell">
-                0/0
-            </td>
-
-            <td class="data-cell">
-                ${healthHtml({
-                    health: "N/A",
-                    health_class: "na"
-                })}
-            </td>
-        `;
-    }
+    const status =
+        column.status || {};
 
 
-    let activeClass = "";
+    const baseClass =
+        column.color === "green"
+            ? "cell-green"
+            : "cell-blue";
 
-    if (color === activeColor) {
 
-        activeClass =
-            color === "blue"
-                ? "active-blue"
-                : "active-green";
-    }
+    const stateClass =
+        getCellClass(column);
 
 
     return `
 
-        <td class="data-cell ${activeClass}">
+        <td
+            class="status-cell ${baseClass} ${stateClass}"
+        >
 
-            <div class="image-tag">
+            <div class="version">
 
-                ${escapeHtml(item.tag)}
-
-            </div>
-
-        </td>
-
-
-        <td class="data-cell ${activeClass}">
-
-            ${
-                statusBadge(
-                    item.status,
-                    color
-                )
-            }
-
-        </td>
-
-
-        <td class="data-cell ${activeClass}">
-
-            <div class="pods">
-
-                ${escapeHtml(item.pods)}
+                ${escapeHtml(
+                    status.tag || "NA"
+                )}
 
             </div>
 
-        </td>
+
+            <div class="health-line">
+
+                ${escapeHtml(
+                    status.health || "NA"
+                )}
+
+            </div>
 
 
-        <td class="data-cell ${activeClass}">
+            <div class="pod-line">
 
-            ${healthHtml(item)}
+                Pods:
+                ${escapeHtml(
+                    String(
+                        status.ready || 0
+                    )
+                )}
+                /
+                ${escapeHtml(
+                    String(
+                        status.desired || 0
+                    )
+                )}
+
+            </div>
+
+
+            <div class="traffic-line">
+
+                ${escapeHtml(
+                    status.traffic || "INACTIVE"
+                )}
+
+            </div>
+
+
+            ${getBadge(column)}
 
         </td>
 
@@ -1544,38 +1579,48 @@ function deploymentCells(item, color, activeColor) {
 
 
 /* ============================================================
-   RENDER MATRIX
+   RENDER DASHBOARD
    ============================================================ */
 
-function renderMatrix(data) {
+function renderDashboard(data) {
 
     const body =
         document.getElementById(
-            "matrix-body"
+            "dashboard-body"
         );
+
 
     body.innerHTML = "";
 
 
     if (
-        !data.environments ||
-        data.environments.length === 0
+        !data.cluster_available
     ) {
+
+        document.getElementById(
+            "warning"
+        ).style.display = "block";
+
 
         body.innerHTML = `
 
             <tr>
 
                 <td
-                    colspan="10"
+                    colspan="9"
                     style="
-                        padding:40px;
-                        color:#667085;
+                        height:160px;
                         text-align:center;
+                        color:#667085;
+                        font-weight:700;
                     "
                 >
 
-                    No Kubernetes environment data available.
+                    Kubernetes cluster unavailable.
+
+                    <br><br>
+
+                    Dashboard will retry automatically.
 
                 </td>
 
@@ -1587,97 +1632,77 @@ function renderMatrix(data) {
     }
 
 
-    data.environments.forEach(environment => {
-
-        const envClass =
-            environmentClass(
-                environment.name
-            );
+    document.getElementById(
+        "warning"
+    ).style.display = "none";
 
 
-        const row = document.createElement("tr");
+    const columns =
+        data.columns || [];
 
 
-        row.innerHTML = `
+    /*
+       We currently have ONE service:
+       payment-service
 
-            <!-- SERVICE -->
-
-            <td
-                class="environment-cell ${envClass}"
-            >
-
-                <div class="environment-name">
-
-                    payment-service
-
-                </div>
-
-                <div class="environment-type">
-
-                    ${escapeHtml(
-                        environment.mode === "single"
-                            ? "Single Deployment"
-                            : "Blue / Green"
-                    )}
-
-                </div>
-
-            </td>
+       The structure is intentionally generic
+       so additional services can be added later.
+    */
 
 
-            <!-- ENVIRONMENT -->
-
-            <td
-                class="environment-cell"
-            >
-
-                <div class="environment-name">
-
-                    ${escapeHtml(
-                        environment.name
-                    )}
-
-                </div>
-
-                <div class="environment-type">
-
-                    ${escapeHtml(
-                        environment.namespace
-                    )}
-
-                </div>
-
-            </td>
+    const row =
+        document.createElement("tr");
 
 
-            <!-- BLUE -->
+    row.innerHTML = `
 
-            ${deploymentCells(
-                environment.blue,
-                "blue",
-                environment.active_color
-            )}
+        <!-- SERVICE -->
+
+        <td class="service-cell">
+
+            <div class="service-name">
+
+                payment-service
+
+            </div>
+
+            <div class="service-type">
+
+                Payment Workflow
+
+            </div>
+
+        </td>
 
 
-            <!-- GREEN -->
+        <!-- ENVIRONMENT -->
 
-            ${deploymentCells(
-                environment.green,
-                "green",
-                environment.active_color
-            )}
+        <td class="environment-cell">
 
-        `;
+            BLUE / GREEN
+
+        </td>
 
 
-        body.appendChild(row);
+        ${columns.map(
+            column => renderCell(column)
+        ).join("")}
 
-    });
+    `;
+
+
+    body.appendChild(row);
+
+
+    document.getElementById(
+        "updated"
+    ).textContent =
+        data.updated_at || "—";
 }
 
 
 /* ============================================================
-   FETCH STATUS
+   REFRESH
    ============================================================ */
 
 async function refreshDashboard() {
@@ -1696,8 +1721,9 @@ async function refreshDashboard() {
         if (!response.ok) {
 
             throw new Error(
-                "Dashboard API unavailable"
+                "API request failed"
             );
+
         }
 
 
@@ -1705,46 +1731,22 @@ async function refreshDashboard() {
             await response.json();
 
 
-        renderMatrix(data);
-
-
-        document.getElementById(
-            "updated-at"
-        ).textContent =
-            data.updated_at || "—";
-
-
-        const warning =
-            document.getElementById(
-                "cluster-warning"
-            );
-
-
-        if (data.cluster_available) {
-
-            warning.style.display = "none";
-
-        } else {
-
-            warning.style.display = "block";
-
-        }
+        renderDashboard(data);
 
 
     } catch (error) {
 
         console.error(
-            "Dashboard refresh failed:",
+            "Dashboard refresh error:",
             error
         );
 
 
         document.getElementById(
-            "cluster-warning"
+            "warning"
         ).style.display = "block";
 
     }
-
 }
 
 
@@ -1756,7 +1758,7 @@ refreshDashboard();
 
 
 /* ============================================================
-   AUTO REFRESH
+   15 SECOND REFRESH
    ============================================================ */
 
 setInterval(
@@ -1766,22 +1768,9 @@ setInterval(
 
 </script>
 
+
 </body>
 
 </html>
         """
     )
-
-
-# ============================================================
-# HEALTH ENDPOINT
-# ============================================================
-
-@app.get("/health")
-def health():
-
-    return {
-        "status": "ok",
-        "service": "release-dashboard",
-        "refresh_seconds": REFRESH_SECONDS,
-    }
