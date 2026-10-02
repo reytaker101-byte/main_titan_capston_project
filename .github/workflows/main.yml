@@ -110,16 +110,6 @@ jobs:
       # ======================================================
 
       # ------------------------------------------------------
-      # Build catalog-service
-      # ------------------------------------------------------
-      - name: Build catalog-service
-        run: |
-          docker build \
-            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/catalog-service:${IMAGE_TAG} \
-            ./services/catalog-service
-
-
-      # ------------------------------------------------------
       # Build payment-service
       # ------------------------------------------------------
       - name: Build payment-service
@@ -132,15 +122,6 @@ jobs:
       # ======================================================
       # PUSH IMAGES TO DEV
       # ======================================================
-
-      # ------------------------------------------------------
-      # Push catalog-service
-      # ------------------------------------------------------
-      - name: Push catalog-service to DEV
-        run: |
-          docker push \
-            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/dev/catalog-service:${IMAGE_TAG}
-
 
       # ------------------------------------------------------
       # Push payment-service
@@ -167,7 +148,6 @@ jobs:
           echo "=========================================="
 
           for SERVICE in \
-            catalog-service \
             payment-service
           do
 

@@ -31,9 +31,6 @@ on:
         required: true
         type: choice
         options:
-          - catalog-service
-          - cart-service
-          - order-service
           - payment-service
       image_tag:
         description: "Release tag"

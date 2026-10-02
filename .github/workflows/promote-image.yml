@@ -130,7 +130,6 @@ jobs:
           echo "=========================================="
 
           for SERVICE in \
-            catalog-service \
             payment-service
           do
 
@@ -166,7 +165,6 @@ jobs:
           echo "=========================================="
 
           for SERVICE in \
-            catalog-service \
             payment-service
           do
 
@@ -204,7 +202,6 @@ jobs:
           echo "=========================================="
 
           for SERVICE in \
-            catalog-service \
             payment-service
           do
 
@@ -259,7 +256,6 @@ jobs:
           echo "=========================================="
 
           for SERVICE in \
-            catalog-service \
             payment-service
           do
 
@@ -299,7 +295,6 @@ jobs:
           echo "=========================================="
 
           for SERVICE in \
-            catalog-service \
             payment-service
           do
 
