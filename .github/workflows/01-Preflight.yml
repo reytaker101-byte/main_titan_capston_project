@@ -1,0 +1,116 @@
+name: 01 - Preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: asia-southeast1
+  GKE_CLUSTER: main-titan-capston-project-cluster
+
+jobs:
+  preflight:
+    name: Bootstrap Argo CD and Verify GKE
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GCP_REGION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Verify cluster
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Create required namespaces
+        run: |
+          for NS in argocd ai-sre-dev ai-sre-stage ai-sre-pilot ai-sre-fleet release-dashboard; do
+            kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+          done
+
+      - name: Install or reconcile Argo CD
+        run: |
+          kubectl apply \
+            -n argocd \
+            -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.1.9/manifests/install.yaml
+
+      - name: Wait for Argo CD
+        run: |
+          kubectl wait \
+            -n argocd \
+            --for=condition=Available \
+            deployment/argocd-server \
+            --timeout=300s
+
+      - name: Register GitOps Application
+        run: |
+          kubectl apply \
+            -f devops-infra/argocd/application.yaml
+
+      - name: Expose Argo CD
+        run: |
+          kubectl apply \
+            -f devops-infra/argocd/argocd-server-service.yaml
+
+      - name: Show Argo CD status and IP
+        run: |
+          echo "=========================================="
+          echo "ARGO CD PODS"
+          echo "=========================================="
+
+          kubectl get pods -n argocd -o wide
+
+          echo ""
+          echo "=========================================="
+          echo "ARGO CD SERVICE"
+          echo "=========================================="
+
+          kubectl get svc argocd-server -n argocd
+
+          echo ""
+          echo "=========================================="
+          echo "ARGO CD EXTERNAL IP"
+          echo "=========================================="
+
+          for i in {1..30}; do
+
+            IP=$(kubectl get svc argocd-server \
+              -n argocd \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' \
+              2>/dev/null || true)
+
+            if [ -n "$IP" ]; then
+              echo "Argo CD URL: https://$IP"
+              break
+            fi
+
+            echo "Waiting for LoadBalancer IP..."
+            sleep 10
+
+          done
+
+      - name: Show application status
+        run: |
+          echo "=========================================="
+          echo "ARGO CD APPLICATION"
+          echo "=========================================="
+
+          kubectl get applications.argoproj.io -n argocd
