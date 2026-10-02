@@ -97,9 +97,7 @@ jobs:
           echo "Building:"
           echo "$IMAGE"
 
-          docker build \
-            -t "$IMAGE" \
-            ./release-dashboard
+          docker build -t "$IMAGE" ./devops-infra/release-dashboard
 
           docker push "$IMAGE"
 
