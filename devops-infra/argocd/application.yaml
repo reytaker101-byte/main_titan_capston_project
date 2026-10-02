@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ai-sre-platform
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/reytaker101-byte/main_titan_capston_project.git
+    targetRevision: main
+    path: devops-infra/kubernetes/manifests
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
