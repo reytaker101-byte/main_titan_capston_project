@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - dev-payment-service.yaml
+  - stage-payment-service-blue.yaml
+  - stage-payment-service-green.yaml
+  - stage-payment-service-service.yaml
+  - pilot-payment-service-blue.yaml
+  - pilot-payment-service-green.yaml
+  - pilot-payment-service-service.yaml
+  - fleet-payment-service-blue.yaml
+  - fleet-payment-service-green.yaml
+  - fleet-payment-service-service.yaml
+  - release-dashboard-rbac.yaml
+  - release-dashboard-deployment.yaml
+  - release-dashboard-service.yaml

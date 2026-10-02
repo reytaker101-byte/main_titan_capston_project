@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service-blue
+  namespace: ai-sre-stage
+  labels:
+    app: payment-service
+    environment: stage
+    color: blue
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: payment-service
+      environment: stage
+      color: blue
+  template:
+    metadata:
+      labels:
+        app: payment-service
+        environment: stage
+        color: blue
+    spec:
+      containers:
+        - name: payment-service
+          image: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo/stage/payment-service:__IMAGE_TAG__
+          ports:
+            - containerPort: 8004
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8004

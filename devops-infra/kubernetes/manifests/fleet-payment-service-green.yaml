@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service-green
+  namespace: ai-sre-fleet
+  labels:
+    app: payment-service
+    environment: fleet
+    color: green
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: payment-service
+      environment: fleet
+      color: green
+  template:
+    metadata:
+      labels:
+        app: payment-service
+        environment: fleet
+        color: green
+    spec:
+      containers:
+        - name: payment-service
+          image: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo/fleet/payment-service:__IMAGE_TAG__
+          ports:
+            - containerPort: 8004
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8004
