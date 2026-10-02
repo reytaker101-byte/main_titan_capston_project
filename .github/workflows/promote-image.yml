@@ -1,4 +1,4 @@
-name: 2.Promote Image
+name: 1.Promote Image
 
 on:
   workflow_dispatch:
