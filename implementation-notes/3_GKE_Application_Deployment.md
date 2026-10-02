@@ -27,56 +27,248 @@ Deploy the four application services to the GKE environment and validate:
 
 ## 3.1 Connect to GKE
 
-From **GCP Console → Kubernetes Engine → Clusters → Connect → Cloud Shell**.
+From **GCP Console → Cloud Shell** → Create Cluster
 
-```bash
-gcloud container clusters get-credentials main-titan-capston-project-cluster \
-  --region asia-southeast1 \
-  --project project-361c9ab3-160b-49e3-915
-```
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ gcloud container clusters create-auto main-titan-capston-project-cluster \
+  --location=asia-southeast1 \
+  --project=project-361c9ab3-160b-49e3-915 \
+  --release-channel=regular
+Creating cluster main-titan-capston-project-cluster in asia-southeast1... Cluster is being health-checked (Kubernetes Control Plane is healthy)...work
+ing...                                                                                                                                                
+Creating cluster main-titan-capston-project-cluster in asia-southeast1... Cluster is being health-checked (Kubernetes Control Plane is healthy)...done
+.
+Created [https://container.googleapis.com/v1/projects/project-361c9ab3-160b-49e3-915/zones/asia-southeast1/clusters/main-titan-capston-project-cluster].
+To inspect the contents of your cluster, go to: https://console.cloud.google.com/kubernetes/workload_/gcloud/asia-southeast1/main-titan-capston-project-cluster?project=project-361c9ab3-160b-49e3-915
+kubeconfig entry generated for main-titan-capston-project-cluster.
+NAME: main-titan-capston-project-cluster
+LOCATION: asia-southeast1
+MASTER_VERSION: 1.35.8-gke.1225000
+MASTER_IP: 34.124.150.45
+MACHINE_TYPE: ek-standard-8
+NODE_VERSION: 1.35.8-gke.1225000
+NUM_NODES: 3
+STATUS: RUNNING
+STACK_TYPE: IPV4
 
-Output:
-
-```text
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ gcloud container clusters get-credentials main-titan-capston-project-cluster \
+  --location=asia-southeast1 \
+  --project=project-361c9ab3-160b-49e3-915
 Fetching cluster endpoint and auth data.
 kubeconfig entry generated for main-titan-capston-project-cluster.
-```
 
-## 3.2 Verify Cluster
 
-```bash
-kubectl get nodes
-```
+## 3.2 Verify Cluster and artifactory repo
 
-Initial output:
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ gcloud container clusters describe main-titan-capston-project-cluster \
+  --location=asia-southeast1 \
+  --project=project-361c9ab3-160b-49e3-915 \
+  --format="value(status)"
+RUNNING
 
-```text
-No resources found
-```
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ gcloud artifacts repositories describe main-titan-capston-project-artifactory-repo \
+  --location=asia-southeast1 \
+  --project=project-361c9ab3-160b-49e3-915
+Encryption: Google-managed key
+Repository Size: 0.000MB
+cleanupPolicyDryRun: true
+createTime: '2026-09-27T14:49:24.642412Z'
+dockerConfig: {}
+format: DOCKER
+mode: STANDARD_REPOSITORY
+name: projects/project-361c9ab3-160b-49e3-915/locations/asia-southeast1/repositories/main-titan-capston-project-artifactory-repo
+registryUri: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo
+satisfiesPzi: true
+satisfiesPzs: true
+updateTime: '2026-10-02T12:52:45.962363Z'
+vulnerabilityScanningConfig:
+  enablementConfig: INHERITED
+  enablementState: SCANNING_DISABLED
+  enablementStateReason: API containerscanning.googleapis.com is not enabled.
+  lastEnableTime: '2026-09-27T14:49:08.729698013Z'
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ 
 
-The Autopilot cluster had not yet provisioned application workload capacity.
+## 3.3 Check connection between Github and GCP
 
-```bash
-kubectl get namespaces
-```
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ gcloud iam workload-identity-pools describe github-pool \
+  --location=global \
+  --project=project-361c9ab3-160b-49e3-915
+description: Github actions authentication
+displayName: github-pool
+name: projects/490747278866/locations/global/workloadIdentityPools/github-pool
+state: ACTIVE
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ gcloud iam workload-identity-pools providers describe github-actions \
+  --workload-identity-pool=github-pool \
+  --location=global \
+  --project=project-361c9ab3-160b-49e3-915
+attributeCondition: assertion.repository == 'reytaker101-byte/main_titan_capston_project'
+attributeMapping:
+  attribute.repository: assertion.repository
+  google.subject: assertion.sub
+displayName: github-actions
+name: projects/490747278866/locations/global/workloadIdentityPools/github-pool/providers/github-actions
+oidc:
+  issuerUri: https://token.actions.githubusercontent.com
+state: ACTIVE
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ gcloud iam service-accounts describe \
+  github-deployer@project-361c9ab3-160b-49e3-915.iam.gserviceaccount.com \
+  --project=project-361c9ab3-160b-49e3-915
+description: ✅ Artifact Registry Writer
+displayName: github-deployer
+email: github-deployer@project-361c9ab3-160b-49e3-915.iam.gserviceaccount.com
+etag: MDEwMjE5MjA=
+name: projects/project-361c9ab3-160b-49e3-915/serviceAccounts/github-deployer@project-361c9ab3-160b-49e3-915.iam.gserviceaccount.com
+oauth2ClientId: '113805046460526072142'
+projectId: project-361c9ab3-160b-49e3-915
+uniqueId: '113805046460526072142'
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ 
 
-Relevant namespaces included:
+## 3.4 Run 1.Build and Push Images workflow
 
-```text
-default
-gke-gmp-system
-gke-managed-cim
-gke-managed-filestorecsi
-gke-managed-networking-dra-driver
-gke-managed-parallelstorecsi
-gke-managed-system
-gmp-public
-kube-node-lease
-kube-public
-kube-system
-```
+Actions → 1.Build and Push Images workflow → Provide build version → Run workflow → When passed, check in GCP Registry
 
-## 3.3 Create Application Namespace
+<img width="1832" height="756" alt="image" src="https://github.com/user-attachments/assets/775b5116-67b3-4471-a6e9-fc37df09d713" />
+
+
+## 3.5 Create ArgoCD and Fashion Shop namespaces
+
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ kubectl create namespace argocd
+namespace/argocd created
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ kubectl apply -n argocd \
+  --server-side \
+  --force-conflicts \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+customresourcedefinition.apiextensions.k8s.io/applications.argoproj.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/applicationsets.argoproj.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/appprojects.argoproj.io serverside-applied
+serviceaccount/argocd-application-controller serverside-applied
+serviceaccount/argocd-applicationset-controller serverside-applied
+serviceaccount/argocd-dex-server serverside-applied
+serviceaccount/argocd-notifications-controller serverside-applied
+serviceaccount/argocd-redis serverside-applied
+serviceaccount/argocd-repo-server serverside-applied
+serviceaccount/argocd-server serverside-applied
+role.rbac.authorization.k8s.io/argocd-application-controller serverside-applied
+role.rbac.authorization.k8s.io/argocd-applicationset-controller serverside-applied
+role.rbac.authorization.k8s.io/argocd-dex-server serverside-applied
+role.rbac.authorization.k8s.io/argocd-notifications-controller serverside-applied
+role.rbac.authorization.k8s.io/argocd-redis serverside-applied
+role.rbac.authorization.k8s.io/argocd-server serverside-applied
+clusterrole.rbac.authorization.k8s.io/argocd-application-controller serverside-applied
+clusterrole.rbac.authorization.k8s.io/argocd-applicationset-controller serverside-applied
+clusterrole.rbac.authorization.k8s.io/argocd-server serverside-applied
+rolebinding.rbac.authorization.k8s.io/argocd-application-controller serverside-applied
+rolebinding.rbac.authorization.k8s.io/argocd-applicationset-controller serverside-applied
+rolebinding.rbac.authorization.k8s.io/argocd-dex-server serverside-applied
+rolebinding.rbac.authorization.k8s.io/argocd-notifications-controller serverside-applied
+rolebinding.rbac.authorization.k8s.io/argocd-redis serverside-applied
+rolebinding.rbac.authorization.k8s.io/argocd-server serverside-applied
+clusterrolebinding.rbac.authorization.k8s.io/argocd-application-controller serverside-applied
+clusterrolebinding.rbac.authorization.k8s.io/argocd-applicationset-controller serverside-applied
+clusterrolebinding.rbac.authorization.k8s.io/argocd-server serverside-applied
+configmap/argocd-cm serverside-applied
+configmap/argocd-cmd-params-cm serverside-applied
+configmap/argocd-gpg-keys-cm serverside-applied
+configmap/argocd-notifications-cm serverside-applied
+configmap/argocd-rbac-cm serverside-applied
+configmap/argocd-ssh-known-hosts-cm serverside-applied
+configmap/argocd-tls-certs-cm serverside-applied
+secret/argocd-notifications-secret serverside-applied
+secret/argocd-secret serverside-applied
+service/argocd-applicationset-controller serverside-applied
+service/argocd-dex-server serverside-applied
+service/argocd-metrics serverside-applied
+service/argocd-notifications-controller-metrics serverside-applied
+service/argocd-redis serverside-applied
+service/argocd-repo-server serverside-applied
+service/argocd-server serverside-applied
+service/argocd-server-metrics serverside-applied
+Warning: autopilot-default-resources-mutator:Autopilot updated Deployment argocd/argocd-applicationset-controller: defaulted unspecified 'cpu' resource for containers [argocd-applicationset-controller] (see http://g.co/gke/autopilot-defaults).
+deployment.apps/argocd-applicationset-controller serverside-applied
+Warning: autopilot-default-resources-mutator:Autopilot updated Deployment argocd/argocd-dex-server: defaulted unspecified 'cpu' resource for containers [copyutil, dex] (see http://g.co/gke/autopilot-defaults).
+deployment.apps/argocd-dex-server serverside-applied
+Warning: autopilot-default-resources-mutator:Autopilot updated Deployment argocd/argocd-notifications-controller: defaulted unspecified 'cpu' resource for containers [argocd-notifications-controller] (see http://g.co/gke/autopilot-defaults).
+deployment.apps/argocd-notifications-controller serverside-applied
+Warning: autopilot-default-resources-mutator:Autopilot updated Deployment argocd/argocd-redis: defaulted unspecified 'cpu' resource for containers [secret-init, redis] (see http://g.co/gke/autopilot-defaults).
+deployment.apps/argocd-redis serverside-applied
+Warning: autopilot-default-resources-mutator:Autopilot updated Deployment argocd/argocd-repo-server: defaulted unspecified 'cpu' resource for containers [copyutil, argocd-repo-server] (see http://g.co/gke/autopilot-defaults).
+deployment.apps/argocd-repo-server serverside-applied
+Warning: autopilot-default-resources-mutator:Autopilot updated Deployment argocd/argocd-server: defaulted unspecified 'cpu' resource for containers [argocd-server] (see http://g.co/gke/autopilot-defaults).
+deployment.apps/argocd-server serverside-applied
+Warning: autopilot-default-resources-mutator:Autopilot updated StatefulSet argocd/argocd-application-controller: defaulted unspecified 'cpu' resource for containers [argocd-application-controller] (see http://g.co/gke/autopilot-defaults).
+statefulset.apps/argocd-application-controller serverside-applied
+networkpolicy.networking.k8s.io/argocd-application-controller-network-policy serverside-applied
+networkpolicy.networking.k8s.io/argocd-applicationset-controller-network-policy serverside-applied
+networkpolicy.networking.k8s.io/argocd-dex-server-network-policy serverside-applied
+networkpolicy.networking.k8s.io/argocd-notifications-controller-network-policy serverside-applied
+networkpolicy.networking.k8s.io/argocd-redis-network-policy serverside-applied
+networkpolicy.networking.k8s.io/argocd-repo-server-network-policy serverside-applied
+networkpolicy.networking.k8s.io/argocd-server-network-policy serverside-applied
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ kubectl create namespace fashion-shop
+namespace/fashion-shop created
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ 
+
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ kubectl get pods -n argocd -w
+NAME                                                READY   STATUS    RESTARTS      AGE
+argocd-application-controller-0                     1/1     Running   0             3m1s
+argocd-applicationset-controller-746f55767b-k7qpn   1/1     Running   0             3m3s
+argocd-dex-server-7cc95d5b4c-jhxdc                  1/1     Running   2 (74s ago)   3m3s
+argocd-notifications-controller-869bb9d45f-cqbws    1/1     Running   0             3m2s
+argocd-redis-7bd6cb9df6-8h2m5                       1/1     Running   0             3m2s
+argocd-repo-server-66b47ff5cf-jd6np                 1/1     Running   0             3m2s
+argocd-server-59bcd548f7-z7kvg                      1/1     Running   0             3m1s
+
+
+## 3.6 Expose ArgoCD UUI and get admin password
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ kubectl patch svc argocd-server \ \
+  -n argocd \
+  -p '{"spec":{"type":"LoadBalancer"}}'
+service/argocd-server patched
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ kubectl get svc argocd-server -n argocd
+NAME            TYPE           CLUSTER-IP       EXTERNAL-IP   PORT(S)                      AGE
+argocd-server   LoadBalancer   34.118.227.217   <pending>     80:30859/TCP,443:31810/TCP   3m57s
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ 
+
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath="{.data.password}" | base64 -d; echo
+B2XEWjlZMUsKdYNe
+
+URL →  https://136.85.69.222 → username: admin , password: from above command
+
+
+## 3.7 Create namespace for release dasboard (having tag version)
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ kubectl get ns argocd fashion-shop
+NAME           STATUS   AGE
+argocd         Active   8m27s
+fashion-shop   Active   7m19s
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ kubectl create namespace release-dashboard
+namespace/release-dashboard created
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ kubectl get ns
+NAME                                STATUS   AGE
+argocd                              Active   13m
+default                             Active   45m
+fashion-shop                        Active   12m
+gke-gmp-system                      Active   43m
+gke-managed-cim                     Active   44m
+gke-managed-filestorecsi            Active   44m
+gke-managed-networking-dra-driver   Active   43m
+gke-managed-parallelstorecsi        Active   42m
+gke-managed-system                  Active   44m
+gke-managed-volumepopulator         Active   43m
+gmp-public                          Active   43m
+kube-node-lease                     Active   45m
+kube-public                         Active   45m
+kube-system                         Active   45m
+release-dashboard                   Active   9s
+iddhawan01@cloudshell:~ (project-361c9ab3-160b-49e3-915)$ 
+
+
+## 3.8 Run 1.Build and Push Images
+
+GitHub → Actions → 1.Build and Push Images → Run workflow 
+
+<img width="1826" height="726" alt="image" src="https://github.com/user-attachments/assets/8fa5185d-5487-4e58-bb3e-205c95b9e3db" />
+
+
 
 Initial incorrect command:
 
@@ -117,6 +309,9 @@ fashion-shop   Active   17s
 ## 3.4 Initial Catalog Deployment Test
 
 A direct deployment was used initially to validate that an Artifact Registry image could run on GKE.
+
+<img width="2888" height="1340" alt="image" src="https://github.com/user-attachments/assets/3dcaa129-7ef4-4530-b69d-4ba809d31877" />
+
 
 ```bash
 kubectl create deployment catalog-service \
