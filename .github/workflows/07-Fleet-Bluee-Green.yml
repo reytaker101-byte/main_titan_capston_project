@@ -1,0 +1,122 @@
+name: 07 - FLEET / PROD Blue Green
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      image_tag:
+        description: "FLEET / PROD image tag"
+        required: true
+        type: string
+
+      target_color:
+        description: "Inactive color to deploy"
+        required: true
+        type: choice
+        options:
+          - blue
+          - green
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: asia-southeast1
+  GKE_CLUSTER: main-titan-capston-project-cluster
+
+jobs:
+
+  deploy:
+    name: Deploy FLEET / PROD Blue Green
+    runs-on: ubuntu-latest
+
+    # Configure GitHub Environment "production"
+    # with required reviewers for human approval.
+    environment:
+      name: production
+
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      COLOR: ${{ inputs.target_color }}
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Candidate deployment.
+      - name: Prepare candidate manifest
+        run: |
+
+          FILE="devops-infra/kubernetes/manifests/fleet-payment-service-${COLOR}.yaml"
+
+          sed -i \
+            "s/__IMAGE_TAG__/${IMAGE_TAG}/g" \
+            "$FILE"
+
+          sed -i \
+            "s/replicas: 0/replicas: 1/" \
+            "$FILE"
+
+      - name: Commit candidate deployment
+        run: |
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add devops-infra/kubernetes/manifests/
+
+          git diff --cached --quiet || \
+            git commit \
+              -m "deploy: FLEET / PROD candidate ${IMAGE_TAG} ${COLOR}"
+
+          git push
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GCP_REGION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Wait for candidate rollout
+        run: |
+
+          kubectl rollout status \
+            deployment/payment-service-${COLOR} \
+            -n ai-sre-fleet \
+            --timeout=300s
+
+      # Traffic switch occurs only after GitHub Environment approval.
+      - name: Switch FLEET / PROD active color
+        run: |
+
+          sed -i \
+            "s/color: blue/color: ${COLOR}/" \
+            devops-infra/kubernetes/manifests/fleet-payment-service-service.yaml
+
+          sed -i \
+            "s/color: green/color: ${COLOR}/" \
+            devops-infra/kubernetes/manifests/fleet-payment-service-service.yaml
+
+      - name: Commit FLEET / PROD traffic switch
+        run: |
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            devops-infra/kubernetes/manifests/fleet-payment-service-service.yaml
+
+          git commit \
+            -m "switch: FLEET / PROD traffic to ${COLOR} ${IMAGE_TAG}" || true
+
+          git push
