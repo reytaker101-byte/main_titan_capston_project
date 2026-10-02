@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: release-dashboard
-          image: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo/dev/release-dashboard:v1.0.0
+          image: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo/dev/release-dashboard:v1.1.0
           ports:
             - containerPort: 8080
           readinessProbe:
