@@ -1,0 +1,114 @@
+name: 02 - Build and Push DEV
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Release image tag, e.g. v1.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: asia-southeast1
+  GAR_REPOSITORY: main-titan-capston-project-artifactory-repo
+
+jobs:
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - name: Analyze with CodeQL
+        uses: github/codeql-action/analyze@v3
+
+
+  build-and-push:
+    name: Build and Push Images
+    needs: codeql
+    runs-on: ubuntu-latest
+
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate tag
+        run: |
+          if [[ ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Invalid image tag."
+            echo "Expected: v<major>.<minor>.<patch>"
+            exit 1
+          fi
+
+          echo "Image tag valid: $IMAGE_TAG"
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker
+        run: |
+          gcloud auth configure-docker \
+            "${GCP_REGION}-docker.pkg.dev" \
+            --quiet
+
+      - name: Build and push payment-service
+        run: |
+
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/payment-service:${IMAGE_TAG}"
+
+          echo "Building:"
+          echo "$IMAGE"
+
+          docker build \
+            -t "$IMAGE" \
+            ./services/payment-service
+
+          docker push "$IMAGE"
+
+          gcloud artifacts docker images describe "$IMAGE"
+
+      - name: Build and push release-dashboard
+        run: |
+
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/release-dashboard:${IMAGE_TAG}"
+
+          echo "Building:"
+          echo "$IMAGE"
+
+          docker build \
+            -t "$IMAGE" \
+            ./release-dashboard
+
+          docker push "$IMAGE"
+
+          gcloud artifacts docker images describe "$IMAGE"
+
+      - name: Build summary
+        run: |
+          echo "=========================================="
+          echo "DEV BUILD SUCCESSFUL"
+          echo "=========================================="
+          echo "payment-service       : $IMAGE_TAG"
+          echo "release-dashboard     : $IMAGE_TAG"
