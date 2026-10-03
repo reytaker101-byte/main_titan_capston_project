@@ -7,7 +7,7 @@ spec:
   selector:
     app: payment-service
     environment: fleet
-    color: blue
+    color: green
   ports:
     - port: 8004
       targetPort: 8004
