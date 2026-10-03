@@ -426,7 +426,8 @@ jobs:
 
           echo ""
           echo "Checking deployment:"
-          echo "${TARGET_DEPLOYMENT}"
+          echo "${TARGET_ENV^^}-${TARGET_COLOR^^}"
+          echo "Kubernetes deployment: ${TARGET_DEPLOYMENT}"
 
           REPLICAS=$(kubectl get deployment "${TARGET_DEPLOYMENT}" \
             -n "${NAMESPACE}" \
@@ -484,9 +485,13 @@ jobs:
             -o jsonpath='{.spec.template.spec.containers[0].image}')
 
           echo ""
-          echo "Inactive deployment : ${INACTIVE_DEPLOYMENT}"
-          echo "Replicas            : ${REPLICAS}"
-          echo "Image               : ${IMAGE}"
+          echo "Checking:"
+          echo "${TARGET_ENV^^}-${INACTIVE_COLOR^^}"
+          echo "Kubernetes deployment: ${INACTIVE_DEPLOYMENT}"
+
+          echo ""
+          echo "Replicas : ${REPLICAS}"
+          echo "Image    : ${IMAGE}"
 
           if [[ "${REPLICAS}" != "0" ]]; then
             echo ""
@@ -504,7 +509,7 @@ jobs:
           echo "Inactive deployment is correctly configured."
 
       # ============================================================
-      # 17. Wait for target pod readiness
+      # 17. Wait for TARGET pod readiness
       # ============================================================
       - name: Wait for target pod readiness
         shell: bash
@@ -512,7 +517,7 @@ jobs:
           set -euo pipefail
 
           echo ""
-          echo "Waiting for ${TARGET_COLOR} payment-service pod..."
+          echo "Waiting for ${TARGET_ENV^^}-${TARGET_COLOR^^} pod..."
 
           kubectl wait \
             --namespace "${NAMESPACE}" \
@@ -532,15 +537,35 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [[ "${TARGET_COLOR}" == "blue" ]]; then
+            INACTIVE_COLOR="green"
+          else
+            INACTIVE_COLOR="blue"
+          fi
+
           echo ""
           echo "=================================================="
-          echo "PAYMENT SERVICE PODS"
+          echo "ACTIVE: ${TARGET_ENV^^}-${TARGET_COLOR^^}"
           echo "=================================================="
 
           kubectl get pods \
             -n "${NAMESPACE}" \
-            -l app=payment-service \
+            -l "app=payment-service,color=${TARGET_COLOR}" \
             -o wide
+
+          echo ""
+          echo "=================================================="
+          echo "INACTIVE: ${TARGET_ENV^^}-${INACTIVE_COLOR^^}"
+          echo "=================================================="
+
+          if kubectl get pods \
+            -n "${NAMESPACE}" \
+            -l "app=payment-service,color=${INACTIVE_COLOR}" \
+            -o wide 2>/dev/null; then
+            true
+          else
+            echo "No pods found - 0 replicas."
+          fi
 
       # ============================================================
       # 19. Verify Service traffic
@@ -555,8 +580,14 @@ jobs:
             -o jsonpath='{.spec.selector.color}')
 
           echo ""
-          echo "Expected color: ${TARGET_COLOR}"
-          echo "Actual color  : ${ACTUAL_COLOR}"
+          echo "=================================================="
+          echo "SERVICE TRAFFIC"
+          echo "=================================================="
+
+          echo "Environment : ${TARGET_ENV^^}"
+          echo "Service     : payment-service"
+          echo "Expected    : ${TARGET_COLOR^^}"
+          echo "Actual      : ${ACTUAL_COLOR^^}"
 
           if [[ "${SWITCH_TRAFFIC}" == "yes" ]]; then
 
@@ -567,52 +598,116 @@ jobs:
             fi
 
             echo ""
-            echo "Traffic successfully switched to ${TARGET_COLOR}."
+            echo "Traffic successfully switched to ${TARGET_COLOR^^}."
+            echo "Traffic     : 100% ${ACTUAL_COLOR^^}"
 
           else
 
             echo ""
             echo "Traffic switch was not requested."
-            echo "Existing Service selector remains: ${ACTUAL_COLOR}"
+            echo "Existing Service selector: ${ACTUAL_COLOR^^}"
 
           fi
 
       # ============================================================
-      # 20. Final status
+      # 20. Final deployment status
       # ============================================================
       - name: Final deployment status
         shell: bash
         run: |
           set -euo pipefail
 
+          if [[ "${TARGET_COLOR}" == "blue" ]]; then
+            INACTIVE_COLOR="green"
+          else
+            INACTIVE_COLOR="blue"
+          fi
+
+          TARGET_DEPLOYMENT="payment-service-${TARGET_COLOR}"
+          INACTIVE_DEPLOYMENT="payment-service-${INACTIVE_COLOR}"
+
+          TARGET_REPLICAS=$(kubectl get deployment "${TARGET_DEPLOYMENT}" \
+            -n "${NAMESPACE}" \
+            -o jsonpath='{.spec.replicas}')
+
+          INACTIVE_REPLICAS=$(kubectl get deployment "${INACTIVE_DEPLOYMENT}" \
+            -n "${NAMESPACE}" \
+            -o jsonpath='{.spec.replicas}')
+
+          TARGET_IMAGE=$(kubectl get deployment "${TARGET_DEPLOYMENT}" \
+            -n "${NAMESPACE}" \
+            -o jsonpath='{.spec.template.spec.containers[0].image}')
+
+          ACTUAL_COLOR=$(kubectl get service payment-service \
+            -n "${NAMESPACE}" \
+            -o jsonpath='{.spec.selector.color}')
+
           echo ""
           echo "=================================================="
           echo "       BLUE-GREEN DEPLOYMENT COMPLETE"
           echo "=================================================="
 
-          echo "Environment : ${TARGET_ENV}"
-          echo "Image       : ${IMAGE_TAG}"
-          echo "Target Color: ${TARGET_COLOR}"
-          echo "Traffic     : ${SWITCH_TRAFFIC}"
+          echo ""
+          echo "Environment : ${TARGET_ENV^^}"
           echo "Namespace   : ${NAMESPACE}"
+          echo "Image       : ${IMAGE_TAG}"
           echo "GitOps SHA  : ${GITOPS_SHA}"
 
           echo ""
-          echo "Deployments:"
-          kubectl get deployments \
-            -n "${NAMESPACE}" \
-            -l app=payment-service
+          echo "=================================================="
+          echo "ACTIVE: ${TARGET_ENV^^}-${TARGET_COLOR^^}"
+          echo "=================================================="
+
+          echo "Deployment : ${TARGET_DEPLOYMENT}"
+          echo "Replicas   : ${TARGET_REPLICAS}"
+          echo "Image      : ${TARGET_IMAGE}"
+          echo "Status     : ACTIVE"
 
           echo ""
           echo "Pods:"
           kubectl get pods \
             -n "${NAMESPACE}" \
-            -l app=payment-service
+            -l "app=payment-service,color=${TARGET_COLOR}" \
+            -o wide
 
           echo ""
-          echo "Service:"
-          kubectl get service payment-service \
-            -n "${NAMESPACE}"
+          echo "=================================================="
+          echo "INACTIVE: ${TARGET_ENV^^}-${INACTIVE_COLOR^^}"
+          echo "=================================================="
+
+          echo "Deployment : ${INACTIVE_DEPLOYMENT}"
+          echo "Replicas   : ${INACTIVE_REPLICAS}"
+          echo "Image      : ${TARGET_IMAGE}"
+          echo "Status     : INACTIVE"
+
+          echo ""
+          echo "Pods:"
+
+          INACTIVE_PODS=$(kubectl get pods \
+            -n "${NAMESPACE}" \
+            -l "app=payment-service,color=${INACTIVE_COLOR}" \
+            --no-headers 2>/dev/null || true)
+
+          if [[ -n "${INACTIVE_PODS}" ]]; then
+            echo "${INACTIVE_PODS}"
+          else
+            echo "No pods running - replicas = 0"
+          fi
+
+          echo ""
+          echo "=================================================="
+          echo "SERVICE TRAFFIC"
+          echo "=================================================="
+
+          echo "Environment : ${TARGET_ENV^^}"
+          echo "Service     : payment-service"
+          echo "Active Color: ${ACTUAL_COLOR^^}"
+
+          if [[ "${SWITCH_TRAFFIC}" == "yes" ]]; then
+            echo "Traffic     : 100% ${ACTUAL_COLOR^^}"
+          else
+            echo "Traffic     : NOT SWITCHED"
+          fi
 
           echo ""
           echo "=================================================="
