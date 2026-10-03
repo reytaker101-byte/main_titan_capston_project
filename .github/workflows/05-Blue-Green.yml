@@ -1,0 +1,426 @@
+name: 05 - Blue Green Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      environment:
+        description: "Environment"
+        required: true
+        type: choice
+        options:
+          - stage
+          - pilot
+          - fleet
+
+      image_tag:
+        description: "Image tag"
+        required: true
+        type: string
+
+      target_color:
+        description: "Active color"
+        required: true
+        type: choice
+        options:
+          - blue
+          - green
+
+      switch_traffic:
+        description: "Switch traffic to target color?"
+        required: true
+        type: choice
+        options:
+          - yes
+          - no
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: asia-southeast1
+  GKE_CLUSTER: main-titan-capston-project-cluster
+
+jobs:
+
+  deploy-blue-green:
+
+    name: Blue Green - ${{ inputs.environment }}
+
+    runs-on: ubuntu-latest
+
+    environment: ${{ inputs.environment == 'fleet' && 'production' || '' }}
+
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      TARGET_COLOR: ${{ inputs.target_color }}
+      SWITCH_TRAFFIC: ${{ inputs.switch_traffic }}
+
+    steps:
+
+      # ---------------------------------------------------------
+      # 1. Checkout
+      # ---------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------
+      # 2. Validate input
+      # ---------------------------------------------------------
+
+      - name: Validate input
+        shell: bash
+        run: |
+          set -e
+
+          echo "Environment : ${ENVIRONMENT}"
+          echo "Image Tag   : ${IMAGE_TAG}"
+          echo "Target Color: ${TARGET_COLOR}"
+          echo "Switch      : ${SWITCH_TRAFFIC}"
+
+          if [[ ! "${IMAGE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid image tag: ${IMAGE_TAG}"
+            echo "Expected format: vX.Y.Z"
+            exit 1
+          fi
+
+          if [[ "${SWITCH_TRAFFIC}" == "no" ]]; then
+            echo ""
+            echo "Candidate deployment only."
+            echo "Traffic will NOT be switched."
+          fi
+
+      # ---------------------------------------------------------
+      # 3. Set environment-specific paths
+      # ---------------------------------------------------------
+
+      - name: Set deployment paths
+        shell: bash
+        run: |
+
+          case "${ENVIRONMENT}" in
+
+            stage)
+              echo "NAMESPACE=ai-sre-stage" >> "$GITHUB_ENV"
+              echo "SERVICE_FILE=devops-infra/kubernetes/manifests/stage-payment-service.yaml" >> "$GITHUB_ENV"
+              echo "BLUE_FILE=devops-infra/kubernetes/manifests/stage-payment-service-blue.yaml" >> "$GITHUB_ENV"
+              echo "GREEN_FILE=devops-infra/kubernetes/manifests/stage-payment-service-green.yaml" >> "$GITHUB_ENV"
+              ;;
+
+            pilot)
+              echo "NAMESPACE=ai-sre-pilot" >> "$GITHUB_ENV"
+              echo "SERVICE_FILE=devops-infra/kubernetes/manifests/pilot-payment-service.yaml" >> "$GITHUB_ENV"
+              echo "BLUE_FILE=devops-infra/kubernetes/manifests/pilot-payment-service-blue.yaml" >> "$GITHUB_ENV"
+              echo "GREEN_FILE=devops-infra/kubernetes/manifests/pilot-payment-service-green.yaml" >> "$GITHUB_ENV"
+              ;;
+
+            fleet)
+              echo "NAMESPACE=ai-sre-fleet" >> "$GITHUB_ENV"
+              echo "SERVICE_FILE=devops-infra/kubernetes/manifests/fleet-payment-service.yaml" >> "$GITHUB_ENV"
+              echo "BLUE_FILE=devops-infra/kubernetes/manifests/fleet-payment-service-blue.yaml" >> "$GITHUB_ENV"
+              echo "GREEN_FILE=devops-infra/kubernetes/manifests/fleet-payment-service-green.yaml" >> "$GITHUB_ENV"
+              ;;
+
+            *)
+              echo "Invalid environment"
+              exit 1
+              ;;
+
+          esac
+
+      # ---------------------------------------------------------
+      # 4. Update image tag
+      # ---------------------------------------------------------
+
+      - name: Update image tags
+        shell: bash
+        run: |
+
+          echo "Updating image tag to ${IMAGE_TAG}"
+
+          sed -i \
+            "s|\(image: .*payment-service:\).*|\1${IMAGE_TAG}|" \
+            "${BLUE_FILE}"
+
+          sed -i \
+            "s|\(image: .*payment-service:\).*|\1${IMAGE_TAG}|" \
+            "${GREEN_FILE}"
+
+      # ---------------------------------------------------------
+      # 5. Configure BLUE / GREEN replicas
+      #
+      # Target color = 1 replica
+      # Other color  = 0 replicas
+      #
+      # This gives:
+      #
+      # BLUE  active  = 1
+      # GREEN inactive = 0
+      #
+      # or vice versa.
+      # ---------------------------------------------------------
+
+      - name: Configure blue green replicas
+        shell: bash
+        run: |
+
+          if [[ "${TARGET_COLOR}" == "blue" ]]; then
+
+            echo "BLUE will be active"
+            echo "GREEN will remain inactive"
+
+            sed -i \
+              -E 's/replicas: [0-9]+/replicas: 1/' \
+              "${BLUE_FILE}"
+
+            sed -i \
+              -E 's/replicas: [0-9]+/replicas: 0/' \
+              "${GREEN_FILE}"
+
+          else
+
+            echo "GREEN will be active"
+            echo "BLUE will remain inactive"
+
+            sed -i \
+              -E 's/replicas: [0-9]+/replicas: 0/' \
+              "${BLUE_FILE}"
+
+            sed -i \
+              -E 's/replicas: [0-9]+/replicas: 1/' \
+              "${GREEN_FILE}"
+
+          fi
+
+      # ---------------------------------------------------------
+      # 6. Update Service selector
+      # ---------------------------------------------------------
+
+      - name: Update service selector
+        if: ${{ inputs.switch_traffic == 'yes' }}
+        shell: bash
+        run: |
+
+          echo "Switching service traffic to ${TARGET_COLOR}"
+
+          sed -i \
+            -E "s/(color: )[a-z]+/\1${TARGET_COLOR}/" \
+            "${SERVICE_FILE}"
+
+      # ---------------------------------------------------------
+      # 7. Show GitOps changes
+      # ---------------------------------------------------------
+
+      - name: Show GitOps changes
+        shell: bash
+        run: |
+
+          echo "======================================"
+          echo "BLUE MANIFEST"
+          echo "======================================"
+
+          cat "${BLUE_FILE}"
+
+          echo ""
+          echo "======================================"
+          echo "GREEN MANIFEST"
+          echo "======================================"
+
+          cat "${GREEN_FILE}"
+
+          echo ""
+          echo "======================================"
+          echo "SERVICE"
+          echo "======================================"
+
+          cat "${SERVICE_FILE}"
+
+      # ---------------------------------------------------------
+      # 8. Commit GitOps changes
+      # ---------------------------------------------------------
+
+      - name: Commit GitOps changes
+        shell: bash
+        run: |
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            "${BLUE_FILE}" \
+            "${GREEN_FILE}" \
+            "${SERVICE_FILE}"
+
+          if git diff --cached --quiet; then
+            echo "No GitOps changes required."
+          else
+
+            git commit \
+              -m "deploy: ${ENVIRONMENT} ${TARGET_COLOR} ${IMAGE_TAG}"
+
+            git push
+
+          fi
+
+      # ---------------------------------------------------------
+      # 9. Authenticate to GCP
+      # ---------------------------------------------------------
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # ---------------------------------------------------------
+      # 10. Get GKE credentials
+      # ---------------------------------------------------------
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GCP_REGION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      # ---------------------------------------------------------
+      # 11. Wait for Argo CD
+      # ---------------------------------------------------------
+
+      - name: Wait for Argo CD sync
+        shell: bash
+        run: |
+
+          echo "Waiting for Argo CD to apply Git changes..."
+
+          for i in {1..30}; do
+
+            STATUS=$(kubectl get application \
+              ai-sre-platform \
+              -n argocd \
+              -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
+
+            HEALTH=$(kubectl get application \
+              ai-sre-platform \
+              -n argocd \
+              -o jsonpath='{.status.health.status}' 2>/dev/null || true)
+
+            echo "Sync=${STATUS} Health=${HEALTH}"
+
+            if [[ "${STATUS}" == "Synced" && "${HEALTH}" == "Healthy" ]]; then
+              echo "Argo CD is Synced and Healthy."
+              break
+            fi
+
+            sleep 10
+
+          done
+
+      # ---------------------------------------------------------
+      # 12. Verify target deployment
+      # ---------------------------------------------------------
+
+      - name: Verify target deployment
+        shell: bash
+        run: |
+
+          TARGET_DEPLOYMENT="payment-service-${TARGET_COLOR}"
+
+          echo "Checking deployment:"
+          echo "${TARGET_DEPLOYMENT}"
+
+          kubectl rollout status \
+            deployment/"${TARGET_DEPLOYMENT}" \
+            -n "${NAMESPACE}" \
+            --timeout=300s
+
+      # ---------------------------------------------------------
+      # 13. Verify pods
+      # ---------------------------------------------------------
+
+      - name: Verify pods
+        shell: bash
+        run: |
+
+          echo "======================================"
+          echo "DEPLOYMENTS"
+          echo "======================================"
+
+          kubectl get deployments \
+            -n "${NAMESPACE}" \
+            -o wide
+
+          echo ""
+          echo "======================================"
+          echo "PODS"
+          echo "======================================"
+
+          kubectl get pods \
+            -n "${NAMESPACE}" \
+            -o wide
+
+      # ---------------------------------------------------------
+      # 14. Verify service traffic
+      # ---------------------------------------------------------
+
+      - name: Verify active traffic
+        shell: bash
+        run: |
+
+          ACTIVE_COLOR=$(kubectl get svc payment-service \
+            -n "${NAMESPACE}" \
+            -o jsonpath='{.spec.selector.color}')
+
+          echo "======================================"
+          echo "ACTIVE COLOR"
+          echo "======================================"
+
+          echo "Expected: ${TARGET_COLOR}"
+          echo "Actual  : ${ACTIVE_COLOR}"
+
+          if [[ "${SWITCH_TRAFFIC}" == "yes" ]]; then
+
+            if [[ "${ACTIVE_COLOR}" != "${TARGET_COLOR}" ]]; then
+              echo "ERROR: Traffic is not pointing to ${TARGET_COLOR}"
+              exit 1
+            fi
+
+            echo "Traffic successfully switched to ${TARGET_COLOR}."
+
+          else
+
+            echo "Traffic switch was not requested."
+
+          fi
+
+      # ---------------------------------------------------------
+      # 15. Final status
+      # ---------------------------------------------------------
+
+      - name: Final deployment status
+        shell: bash
+        run: |
+
+          echo ""
+          echo "======================================"
+          echo "BLUE-GREEN DEPLOYMENT COMPLETE"
+          echo "======================================"
+
+          echo "Environment : ${ENVIRONMENT}"
+          echo "Image       : ${IMAGE_TAG}"
+          echo "Target      : ${TARGET_COLOR}"
+          echo "Traffic     : ${SWITCH_TRAFFIC}"
+
+          echo ""
+
+          kubectl get svc payment-service \
+            -n "${NAMESPACE}" \
+            -o jsonpath='Service selector: {.spec.selector}{"\n"}'
+
+          kubectl get deployments \
+            -n "${NAMESPACE}" \
+            -o wide
