@@ -30,8 +30,8 @@ on:
         required: true
         type: choice
         options:
-          - yes
-          - no
+          - "yes"
+          - "no"
 
 permissions:
   contents: write
