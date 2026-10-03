@@ -15,7 +15,7 @@ env:
 jobs:
   preflight:
     name: Bootstrap Argo CD and Verify GKE
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
 

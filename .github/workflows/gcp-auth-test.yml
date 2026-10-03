@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   auth-test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
       - name: Authenticate to GCP

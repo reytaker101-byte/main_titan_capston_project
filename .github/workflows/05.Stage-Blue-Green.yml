@@ -30,7 +30,7 @@ jobs:
 
   deploy:
     name: Deploy STAGE Blue Green
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     env:
       IMAGE_TAG: ${{ inputs.image_tag }}

@@ -15,7 +15,7 @@ jobs:
 
   deploy:
     name: Update DEV GitOps
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     env:
       IMAGE_TAG: ${{ inputs.image_tag }}
