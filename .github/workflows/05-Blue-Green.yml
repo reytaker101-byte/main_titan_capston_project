@@ -26,10 +26,12 @@ on:
           - green
 
       switch_traffic:
-        description: "Switch traffic to target color"
+        description: "Switch traffic to target color?"
         required: true
-        type: boolean
-        default: true
+        type: choice
+        options:
+          - yes
+          - no
 
 permissions:
   contents: write
@@ -56,15 +58,15 @@ jobs:
 
     steps:
 
-      # ------------------------------------------------------------
-      # 1. Checkout
-      # ------------------------------------------------------------
+      # ============================================================
+      # 1. Checkout repository
+      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------
+      # ============================================================
       # 2. Validate inputs
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Validate inputs
         shell: bash
         run: |
@@ -94,9 +96,15 @@ jobs:
             exit 1
           fi
 
-      # ------------------------------------------------------------
+          if [[ "${SWITCH_TRAFFIC}" != "yes" &&
+                "${SWITCH_TRAFFIC}" != "no" ]]; then
+            echo "ERROR: switch_traffic must be yes or no"
+            exit 1
+          fi
+
+      # ============================================================
       # 3. Resolve environment-specific files
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Resolve GitOps files
         shell: bash
         run: |
@@ -139,9 +147,9 @@ jobs:
           echo "BLUE_FILE    = ${BLUE_FILE}"
           echo "GREEN_FILE   = ${GREEN_FILE}"
 
-      # ------------------------------------------------------------
+      # ============================================================
       # 4. Validate manifests exist
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Validate GitOps manifests
         shell: bash
         run: |
@@ -160,9 +168,9 @@ jobs:
             echo "Found: ${FILE}"
           done
 
-      # ------------------------------------------------------------
-      # 5. Update both BLUE and GREEN image tags
-      # ------------------------------------------------------------
+      # ============================================================
+      # 5. Update image tag in BLUE and GREEN
+      # ============================================================
       - name: Update image tags
         shell: bash
         run: |
@@ -176,16 +184,17 @@ jobs:
             "s|(image: .*payment-service:).*|\1${IMAGE_TAG}|" \
             "${GREEN_FILE}"
 
-          echo "Updated image tag to ${IMAGE_TAG} in:"
-          echo "  ${BLUE_FILE}"
-          echo "  ${GREEN_FILE}"
+          echo ""
+          echo "Updated image tag:"
+          echo "  BLUE  = ${IMAGE_TAG}"
+          echo "  GREEN = ${IMAGE_TAG}"
 
-      # ------------------------------------------------------------
+      # ============================================================
       # 6. Configure BLUE/GREEN replicas
       #
       # Target color = 1 replica
       # Other color  = 0 replicas
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Configure blue green replicas
         shell: bash
         run: |
@@ -213,24 +222,23 @@ jobs:
 
           fi
 
-          echo "Configured replicas:"
           echo ""
-          echo "BLUE:"
+          echo "BLUE replicas:"
           grep -n "replicas:" "${BLUE_FILE}"
 
           echo ""
-          echo "GREEN:"
+          echo "GREEN replicas:"
           grep -n "replicas:" "${GREEN_FILE}"
 
-      # ------------------------------------------------------------
-      # 7. Switch Service traffic if requested
-      # ------------------------------------------------------------
+      # ============================================================
+      # 7. Configure Service traffic
+      # ============================================================
       - name: Configure traffic switch
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${SWITCH_TRAFFIC}" == "true" ]]; then
+          if [[ "${SWITCH_TRAFFIC}" == "yes" ]]; then
 
             echo "Traffic switch requested."
             echo "Switching Service selector to: ${TARGET_COLOR}"
@@ -242,35 +250,41 @@ jobs:
           else
 
             echo "Traffic switch NOT requested."
-            echo "Service selector will remain unchanged."
+            echo "Existing Service selector will remain unchanged."
 
           fi
 
           echo ""
-          echo "Current Service selector:"
+          echo "Service selector in GitOps:"
           grep -A3 "selector:" "${SERVICE_FILE}"
 
-      # ------------------------------------------------------------
-      # 8. Show final GitOps manifests
-      # ------------------------------------------------------------
+      # ============================================================
+      # 8. Display final GitOps configuration
+      # ============================================================
       - name: Show rendered GitOps configuration
         shell: bash
         run: |
           echo ""
-          echo "========== BLUE =========="
+          echo "=================================================="
+          echo "BLUE MANIFEST"
+          echo "=================================================="
           cat "${BLUE_FILE}"
 
           echo ""
-          echo "========== GREEN =========="
+          echo "=================================================="
+          echo "GREEN MANIFEST"
+          echo "=================================================="
           cat "${GREEN_FILE}"
 
           echo ""
-          echo "========== SERVICE =========="
+          echo "=================================================="
+          echo "SERVICE MANIFEST"
+          echo "=================================================="
           cat "${SERVICE_FILE}"
 
-      # ------------------------------------------------------------
-      # 9. Commit and push GitOps change
-      # ------------------------------------------------------------
+      # ============================================================
+      # 9. Commit and push GitOps changes
+      # ============================================================
       - name: Commit GitOps change
         shell: bash
         run: |
@@ -294,7 +308,7 @@ jobs:
           fi
 
           # IMPORTANT:
-          # This is the Git commit containing the GitOps change.
+          # This is the Git commit containing the desired GitOps state.
           GITOPS_SHA=$(git rev-parse HEAD)
 
           echo ""
@@ -303,18 +317,18 @@ jobs:
 
           echo "GITOPS_SHA=${GITOPS_SHA}" >> "$GITHUB_ENV"
 
-      # ------------------------------------------------------------
+      # ============================================================
       # 10. Authenticate to GCP
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      # ------------------------------------------------------------
+      # ============================================================
       # 11. Get GKE credentials
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Get GKE credentials
         uses: google-github-actions/get-gke-credentials@v2
         with:
@@ -322,22 +336,24 @@ jobs:
           location: ${{ env.GCP_REGION }}
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      # ------------------------------------------------------------
-      # 12. Verify cluster connectivity
-      # ------------------------------------------------------------
+      # ============================================================
+      # 12. Verify GKE
+      # ============================================================
       - name: Verify GKE
         shell: bash
         run: |
           set -euo pipefail
 
+          echo "Cluster:"
           kubectl cluster-info
 
           echo ""
+          echo "Nodes:"
           kubectl get nodes
 
-      # ------------------------------------------------------------
+      # ============================================================
       # 13. Force Argo CD refresh
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Refresh Argo CD
         shell: bash
         run: |
@@ -349,15 +365,16 @@ jobs:
             argocd.argoproj.io/refresh=hard \
             --overwrite
 
-      # ------------------------------------------------------------
-      # 14. WAIT for Argo CD to sync EXACT Git commit
-      # ------------------------------------------------------------
+      # ============================================================
+      # 14. Wait for EXACT GitOps revision
+      # ============================================================
       - name: Wait for Argo CD GitOps revision
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Waiting for Argo CD to process Git commit:"
+          echo ""
+          echo "Waiting for Argo CD to process:"
           echo "${GITOPS_SHA}"
 
           for i in {1..60}; do
@@ -385,7 +402,7 @@ jobs:
                   "${HEALTH_STATUS}" == "Healthy" ]]; then
 
               echo ""
-              echo "Argo CD is synced to the NEW GitOps commit."
+              echo "SUCCESS: Argo CD is synced to the new GitOps commit."
               exit 0
             fi
 
@@ -394,15 +411,14 @@ jobs:
           done
 
           echo ""
-          echo "ERROR: Argo CD did not reach the expected GitOps revision."
-          echo "Expected:"
-          echo "${GITOPS_SHA}"
+          echo "ERROR: Argo CD did not reach expected GitOps revision."
+          echo "Expected: ${GITOPS_SHA}"
 
           exit 1
 
-      # ------------------------------------------------------------
-      # 15. Verify TARGET deployment spec
-      # ------------------------------------------------------------
+      # ============================================================
+      # 15. Verify TARGET deployment
+      # ============================================================
       - name: Verify target deployment
         shell: bash
         run: |
@@ -410,6 +426,7 @@ jobs:
 
           TARGET_DEPLOYMENT="payment-service-${TARGET_COLOR}"
 
+          echo ""
           echo "Checking deployment:"
           echo "${TARGET_DEPLOYMENT}"
 
@@ -444,9 +461,9 @@ jobs:
           echo ""
           echo "Target deployment specification is correct."
 
-      # ------------------------------------------------------------
+      # ============================================================
       # 16. Verify INACTIVE deployment
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Verify inactive deployment
         shell: bash
         run: |
@@ -468,6 +485,7 @@ jobs:
             -n "${NAMESPACE}" \
             -o jsonpath='{.spec.template.spec.containers[0].image}')
 
+          echo ""
           echo "Inactive deployment : ${INACTIVE_DEPLOYMENT}"
           echo "Replicas            : ${REPLICAS}"
           echo "Image               : ${IMAGE}"
@@ -487,14 +505,15 @@ jobs:
           echo ""
           echo "Inactive deployment is correctly configured."
 
-      # ------------------------------------------------------------
-      # 17. Wait for TARGET pod to become Ready
-      # ------------------------------------------------------------
+      # ============================================================
+      # 17. Wait for target pod readiness
+      # ============================================================
       - name: Wait for target pod readiness
         shell: bash
         run: |
           set -euo pipefail
 
+          echo ""
           echo "Waiting for ${TARGET_COLOR} payment-service pod..."
 
           kubectl wait \
@@ -507,25 +526,27 @@ jobs:
           echo ""
           echo "Target pod is Ready."
 
-      # ------------------------------------------------------------
-      # 18. Verify actual pods
-      # ------------------------------------------------------------
+      # ============================================================
+      # 18. Verify pods
+      # ============================================================
       - name: Verify pods
         shell: bash
         run: |
           set -euo pipefail
 
           echo ""
-          echo "========== PODS =========="
+          echo "=================================================="
+          echo "PAYMENT SERVICE PODS"
+          echo "=================================================="
 
           kubectl get pods \
             -n "${NAMESPACE}" \
             -l app=payment-service \
             -o wide
 
-      # ------------------------------------------------------------
-      # 19. Verify Service traffic selector
-      # ------------------------------------------------------------
+      # ============================================================
+      # 19. Verify Service traffic
+      # ============================================================
       - name: Verify service traffic
         shell: bash
         run: |
@@ -535,10 +556,11 @@ jobs:
             -n "${NAMESPACE}" \
             -o jsonpath='{.spec.selector.color}')
 
+          echo ""
           echo "Expected color: ${TARGET_COLOR}"
           echo "Actual color  : ${ACTUAL_COLOR}"
 
-          if [[ "${SWITCH_TRAFFIC}" == "true" ]]; then
+          if [[ "${SWITCH_TRAFFIC}" == "yes" ]]; then
 
             if [[ "${ACTUAL_COLOR}" != "${TARGET_COLOR}" ]]; then
               echo ""
@@ -553,12 +575,13 @@ jobs:
 
             echo ""
             echo "Traffic switch was not requested."
+            echo "Existing Service selector remains: ${ACTUAL_COLOR}"
 
           fi
 
-      # ------------------------------------------------------------
-      # 20. Final deployment status
-      # ------------------------------------------------------------
+      # ============================================================
+      # 20. Final status
+      # ============================================================
       - name: Final deployment status
         shell: bash
         run: |
@@ -566,7 +589,7 @@ jobs:
 
           echo ""
           echo "=================================================="
-          echo "        BLUE-GREEN DEPLOYMENT COMPLETE"
+          echo "       BLUE-GREEN DEPLOYMENT COMPLETE"
           echo "=================================================="
 
           echo "Environment : ${TARGET_ENV}"
@@ -595,5 +618,5 @@ jobs:
 
           echo ""
           echo "=================================================="
-          echo "        ALL VALIDATIONS PASSED"
+          echo "          ALL VALIDATIONS PASSED"
           echo "=================================================="
