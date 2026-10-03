@@ -44,10 +44,18 @@ env:
 
 jobs:
 
+  # ============================================================
+  # BLUE-GREEN DEPLOYMENT
+  # ============================================================
+
   blue-green:
+
     name: Blue Green Deployment
+
     runs-on: ubuntu-latest
 
+    # Fleet requires production approval.
+    # Stage/Pilot do not.
     environment: ${{ inputs.environment == 'fleet' && 'production' || '' }}
 
     env:
@@ -58,23 +66,24 @@ jobs:
 
     steps:
 
-      # ============================================================
+      # ==========================================================
       # 1. CHECKOUT
-      # ============================================================
+      # ==========================================================
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
 
-      # ============================================================
+      # ==========================================================
       # 2. VALIDATE INPUTS
-      # ============================================================
+      # ==========================================================
 
       - name: Validate inputs
         shell: bash
         run: |
           set -euo pipefail
 
+          echo ""
           echo "=================================================="
           echo "BLUE-GREEN DEPLOYMENT INPUTS"
           echo "=================================================="
@@ -114,9 +123,9 @@ jobs:
           echo "Input validation passed."
 
 
-      # ============================================================
+      # ==========================================================
       # 3. RESOLVE GITOPS FILES
-      # ============================================================
+      # ==========================================================
 
       - name: Resolve GitOps files
         shell: bash
@@ -126,34 +135,49 @@ jobs:
           case "${TARGET_ENV}" in
 
             stage)
+
               NAMESPACE="ai-sre-stage"
 
               SERVICE_FILE="devops-infra/kubernetes/manifests/stage-payment-service-service.yaml"
+
               BLUE_FILE="devops-infra/kubernetes/manifests/stage-payment-service-blue.yaml"
+
               GREEN_FILE="devops-infra/kubernetes/manifests/stage-payment-service-green.yaml"
+
               ;;
 
             pilot)
+
               NAMESPACE="ai-sre-pilot"
 
               SERVICE_FILE="devops-infra/kubernetes/manifests/pilot-payment-service-service.yaml"
+
               BLUE_FILE="devops-infra/kubernetes/manifests/pilot-payment-service-blue.yaml"
+
               GREEN_FILE="devops-infra/kubernetes/manifests/pilot-payment-service-green.yaml"
+
               ;;
 
             fleet)
+
               NAMESPACE="ai-sre-fleet"
 
               SERVICE_FILE="devops-infra/kubernetes/manifests/fleet-payment-service-service.yaml"
+
               BLUE_FILE="devops-infra/kubernetes/manifests/fleet-payment-service-blue.yaml"
+
               GREEN_FILE="devops-infra/kubernetes/manifests/fleet-payment-service-green.yaml"
+
               ;;
 
           esac
 
           echo "NAMESPACE=${NAMESPACE}" >> "$GITHUB_ENV"
+
           echo "SERVICE_FILE=${SERVICE_FILE}" >> "$GITHUB_ENV"
+
           echo "BLUE_FILE=${BLUE_FILE}" >> "$GITHUB_ENV"
+
           echo "GREEN_FILE=${GREEN_FILE}" >> "$GITHUB_ENV"
 
           echo ""
@@ -161,16 +185,16 @@ jobs:
           echo "GITOPS CONFIGURATION"
           echo "=================================================="
 
-          echo "Environment    : ${TARGET_ENV}"
-          echo "Namespace      : ${NAMESPACE}"
-          echo "Service File   : ${SERVICE_FILE}"
-          echo "Blue File      : ${BLUE_FILE}"
-          echo "Green File     : ${GREEN_FILE}"
+          echo "Environment  : ${TARGET_ENV}"
+          echo "Namespace    : ${NAMESPACE}"
+          echo "Service File : ${SERVICE_FILE}"
+          echo "Blue File    : ${BLUE_FILE}"
+          echo "Green File   : ${GREEN_FILE}"
 
 
-      # ============================================================
+      # ==========================================================
       # 4. VALIDATE MANIFESTS
-      # ============================================================
+      # ==========================================================
 
       - name: Validate GitOps manifests
         shell: bash
@@ -180,7 +204,7 @@ jobs:
           for FILE in \
             "${SERVICE_FILE}" \
             "${BLUE_FILE}" \
-            "${GREEN_FILE}"
+            "${GREEN_FILE"
           do
 
             if [[ ! -f "${FILE}" ]]; then
@@ -193,9 +217,9 @@ jobs:
           done
 
 
-      # ============================================================
+      # ==========================================================
       # 5. DETERMINE CURRENT ACTIVE COLOR
-      # ============================================================
+      # ==========================================================
 
       - name: Determine current active color
         shell: bash
@@ -204,17 +228,20 @@ jobs:
 
           CURRENT_COLOR="blue"
 
-          if grep -qE "color:[[:space:]]*green" "${SERVICE_FILE}"; then
-            CURRENT_COLOR="green"
-          fi
+          if grep -qE "^[[:space:]]*color:[[:space:]]*green[[:space:]]*$" \
+            "${SERVICE_FILE}"; then
 
-          echo "CURRENT_COLOR=${CURRENT_COLOR}" >> "$GITHUB_ENV"
+            CURRENT_COLOR="green"
+
+          fi
 
           if [[ "${CURRENT_COLOR}" == "blue" ]]; then
             CURRENT_INACTIVE_COLOR="green"
           else
             CURRENT_INACTIVE_COLOR="blue"
           fi
+
+          echo "CURRENT_COLOR=${CURRENT_COLOR}" >> "$GITHUB_ENV"
 
           echo "CURRENT_INACTIVE_COLOR=${CURRENT_INACTIVE_COLOR}" >> "$GITHUB_ENV"
 
@@ -227,9 +254,9 @@ jobs:
           echo "Current Inactive     : ${CURRENT_INACTIVE_COLOR}"
 
 
-      # ============================================================
+      # ==========================================================
       # 6. UPDATE IMAGE TAGS
-      # ============================================================
+      # ==========================================================
 
       - name: Update image tags
         shell: bash
@@ -253,19 +280,20 @@ jobs:
           echo "GREEN : ${IMAGE_TAG}"
 
 
-      # ============================================================
-      # 7. SET REPLICAS
+      # ==========================================================
+      # 7. CONFIGURE REPLICAS
       #
-      # switch_traffic=yes:
-      #   target = active = 1
-      #   other  = inactive = 0
+      # switch=yes:
+      #   target color  = 1 replica
+      #   other color   = 0 replicas
       #
-      # switch_traffic=no:
-      #   existing active stays active = 1
-      #   target candidate becomes inactive = 1
+      # switch=no:
+      #   existing active = 1
+      #   target candidate = 1
       #
-      # This allows safe pre-deployment/testing.
-      # ============================================================
+      # This allows the candidate to be validated before
+      # switching traffic.
+      # ==========================================================
 
       - name: Configure blue green replicas
         shell: bash
@@ -301,23 +329,31 @@ jobs:
           else
 
             echo "Traffic switch NOT requested."
-            echo "Keeping existing active color running."
+            echo "Existing traffic remains on ${CURRENT_COLOR}."
 
+            # Keep current active deployment running.
             if [[ "${CURRENT_COLOR}" == "blue" ]]; then
 
               sed -i -E \
                 's/^([[:space:]]*replicas:)[[:space:]]*[0-9]+/\1 1/' \
                 "${BLUE_FILE}"
 
-              sed -i -E \
-                's/^([[:space:]]*replicas:)[[:space:]]*[0-9]+/\1 1/' \
-                "${GREEN_FILE}"
-
             else
 
               sed -i -E \
                 's/^([[:space:]]*replicas:)[[:space:]]*[0-9]+/\1 1/' \
+                "${GREEN_FILE}"
+
+            fi
+
+            # Run candidate as well so readiness can be validated.
+            if [[ "${TARGET_COLOR}" == "blue" ]]; then
+
+              sed -i -E \
+                's/^([[:space:]]*replicas:)[[:space:]]*[0-9]+/\1 1/' \
                 "${BLUE_FILE}"
+
+            else
 
               sed -i -E \
                 's/^([[:space:]]*replicas:)[[:space:]]*[0-9]+/\1 1/' \
@@ -330,25 +366,36 @@ jobs:
           echo ""
           echo "Replica configuration:"
           echo ""
+
           echo "BLUE:"
           grep -n "replicas:" "${BLUE_FILE}"
 
           echo ""
+
           echo "GREEN:"
           grep -n "replicas:" "${GREEN_FILE}"
 
 
-      # ============================================================
-      # 8. SET ARGOCD-FRIENDLY RESOURCE NAMES
+      # ==========================================================
+      # 8. CONFIGURE ARGO CD RESOURCE NAMES
       #
-      # Examples:
+      # IMPORTANT:
       #
-      # payment-service-pilot-blue-active
-      # payment-service-pilot-green-inactive
+      # pilot:
+      #   payment-service-pilot-blue-active
+      #   payment-service-pilot-green-inactive
       #
-      # payment-service-fleet-blue-active
-      # payment-service-fleet-green-inactive
-      # ============================================================
+      # fleet:
+      #   payment-service-fleet-blue-active
+      #   payment-service-fleet-green-inactive
+      #
+      # stage:
+      #   payment-service-stage-blue-active
+      #   payment-service-stage-green-inactive
+      #
+      # Only metadata.name is changed.
+      # Labels and selectors remain unchanged.
+      # ==========================================================
 
       - name: Configure Argo CD resource names
         shell: bash
@@ -358,29 +405,39 @@ jobs:
           if [[ "${SWITCH_TRAFFIC}" == "yes" ]]; then
 
             if [[ "${TARGET_COLOR}" == "blue" ]]; then
+
               BLUE_STATE="active"
               GREEN_STATE="inactive"
+
             else
+
               BLUE_STATE="inactive"
               GREEN_STATE="active"
+
             fi
 
           else
 
             if [[ "${CURRENT_COLOR}" == "blue" ]]; then
+
               BLUE_STATE="active"
               GREEN_STATE="inactive"
+
             else
+
               BLUE_STATE="inactive"
               GREEN_STATE="active"
+
             fi
 
           fi
 
           BLUE_NAME="payment-service-${TARGET_ENV}-blue-${BLUE_STATE}"
+
           GREEN_NAME="payment-service-${TARGET_ENV}-green-${GREEN_STATE}"
 
           echo "BLUE_NAME=${BLUE_NAME}" >> "$GITHUB_ENV"
+
           echo "GREEN_NAME=${GREEN_NAME}" >> "$GITHUB_ENV"
 
           echo ""
@@ -391,32 +448,41 @@ jobs:
           echo "BLUE  : ${BLUE_NAME}"
           echo "GREEN : ${GREEN_NAME}"
 
-          # Replace Deployment metadata.name only.
+          # ------------------------------------------------------
+          # Replace ONLY metadata.name.
           #
-          # Keep labels/selectors unchanged:
-          # app: payment-service
-          # color: blue/green
+          # Existing:
+          #   metadata:
+          #     name: payment-service-blue
+          #
+          # Becomes:
+          #   metadata:
+          #     name: payment-service-pilot-blue-active
+          #
+          # This intentionally targets the first 2-space
+          # "name:" entry, which is metadata.name.
+          # ------------------------------------------------------
 
           sed -i -E \
-            "0,/^[[:space:]]*name:[[:space:]]*payment-service-[a-z]+-[a-z]+$/s//  name: ${BLUE_NAME}/" \
+            "0,/^[[:space:]]{2}name:[[:space:]]*/s//  name: ${BLUE_NAME}/" \
             "${BLUE_FILE}"
 
           sed -i -E \
-            "0,/^[[:space:]]*name:[[:space:]]*payment-service-[a-z]+-[a-z]+$/s//  name: ${GREEN_NAME}/" \
+            "0,/^[[:space:]]{2}name:[[:space:]]*/s//  name: ${GREEN_NAME}/" \
             "${GREEN_FILE}"
 
           echo ""
-          echo "BLUE deployment name:"
-          grep -n -m1 "name:" "${BLUE_FILE}"
+          echo "BLUE manifest metadata:"
+          sed -n '1,10p' "${BLUE_FILE}"
 
           echo ""
-          echo "GREEN deployment name:"
-          grep -n -m1 "name:" "${GREEN_FILE}"
+          echo "GREEN manifest metadata:"
+          sed -n '1,10p' "${GREEN_FILE}"
 
 
-      # ============================================================
+      # ==========================================================
       # 9. CONFIGURE SERVICE TRAFFIC
-      # ============================================================
+      # ==========================================================
 
       - name: Configure traffic switch
         shell: bash
@@ -426,6 +492,7 @@ jobs:
           if [[ "${SWITCH_TRAFFIC}" == "yes" ]]; then
 
             echo "Traffic switch requested."
+
             echo "Switching Service selector to: ${TARGET_COLOR}"
 
             sed -i -E \
@@ -435,18 +502,20 @@ jobs:
           else
 
             echo "Traffic switch NOT requested."
+
             echo "Keeping Service selector on: ${CURRENT_COLOR}"
 
           fi
 
           echo ""
           echo "Service selector:"
-          grep -A3 "selector:" "${SERVICE_FILE}"
+
+          grep -A4 "selector:" "${SERVICE_FILE}"
 
 
-      # ============================================================
+      # ==========================================================
       # 10. SHOW FINAL GITOPS CONFIGURATION
-      # ============================================================
+      # ==========================================================
 
       - name: Show rendered GitOps configuration
         shell: bash
@@ -474,9 +543,9 @@ jobs:
           cat "${SERVICE_FILE}"
 
 
-      # ============================================================
+      # ==========================================================
       # 11. COMMIT GITOPS CHANGE
-      # ============================================================
+      # ==========================================================
 
       - name: Commit GitOps change
         shell: bash
@@ -484,7 +553,9 @@ jobs:
           set -euo pipefail
 
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add \
             "${BLUE_FILE}" \
@@ -507,15 +578,18 @@ jobs:
           GITOPS_SHA=$(git rev-parse HEAD)
 
           echo ""
-          echo "GitOps Commit SHA:"
+          echo "=================================================="
+          echo "GITOPS COMMIT"
+          echo "=================================================="
+
           echo "${GITOPS_SHA}"
 
           echo "GITOPS_SHA=${GITOPS_SHA}" >> "$GITHUB_ENV"
 
 
-      # ============================================================
-      # 12. GCP AUTH
-      # ============================================================
+      # ==========================================================
+      # 12. AUTHENTICATE TO GCP
+      # ==========================================================
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
@@ -524,9 +598,9 @@ jobs:
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
 
-      # ============================================================
-      # 13. GKE CREDENTIALS
-      # ============================================================
+      # ==========================================================
+      # 13. GET GKE CREDENTIALS
+      # ==========================================================
 
       - name: Get GKE credentials
         uses: google-github-actions/get-gke-credentials@v2
@@ -536,24 +610,30 @@ jobs:
           project_id: ${{ env.GCP_PROJECT_ID }}
 
 
-      # ============================================================
+      # ==========================================================
       # 14. VERIFY GKE
-      # ============================================================
+      # ==========================================================
 
       - name: Verify GKE
         shell: bash
         run: |
           set -euo pipefail
 
+          echo ""
+          echo "=================================================="
+          echo "GKE"
+          echo "=================================================="
+
           kubectl cluster-info
 
           echo ""
+
           kubectl get nodes
 
 
-      # ============================================================
+      # ==========================================================
       # 15. REFRESH ARGO CD
-      # ============================================================
+      # ==========================================================
 
       - name: Refresh Argo CD
         shell: bash
@@ -565,9 +645,9 @@ jobs:
             --overwrite
 
 
-      # ============================================================
+      # ==========================================================
       # 16. WAIT FOR ARGO CD
-      # ============================================================
+      # ==========================================================
 
       - name: Wait for Argo CD GitOps revision
         shell: bash
@@ -601,8 +681,11 @@ jobs:
 
             echo ""
             echo "Attempt ${i}/60"
+
             echo "Sync revision : ${SYNC_REVISION}"
+
             echo "Sync status   : ${SYNC_STATUS}"
+
             echo "Health status : ${HEALTH_STATUS}"
 
             if [[ "${SYNC_REVISION}" == "${GITOPS_SHA}" &&
@@ -611,6 +694,7 @@ jobs:
 
               echo ""
               echo "SUCCESS: Argo CD is synced and healthy."
+
               exit 0
 
             fi
@@ -621,28 +705,29 @@ jobs:
 
           echo ""
           echo "ERROR: Argo CD did not reach expected GitOps revision."
+
           echo "Expected: ${GITOPS_SHA}"
 
           exit 1
 
 
-      # ============================================================
+      # ==========================================================
       # 17. VERIFY TARGET DEPLOYMENT
-      # ============================================================
+      # ==========================================================
 
       - name: Verify target deployment
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${SWITCH_TRAFFIC}" == "yes" ]]; then
-            TARGET_DEPLOYMENT="${TARGET_COLOR == 'blue' && BLUE_NAME || GREEN_NAME}"
+          if [[ "${TARGET_COLOR}" == "blue" ]]; then
+
+            TARGET_DEPLOYMENT="${BLUE_NAME}"
+
           else
-            if [[ "${TARGET_COLOR}" == "blue" ]]; then
-              TARGET_DEPLOYMENT="${BLUE_NAME}"
-            else
-              TARGET_DEPLOYMENT="${GREEN_NAME}"
-            fi
+
+            TARGET_DEPLOYMENT="${GREEN_NAME}"
+
           fi
 
           echo ""
@@ -661,19 +746,100 @@ jobs:
             -o jsonpath='{.spec.template.spec.containers[0].image}')
 
           echo "Replicas   : ${REPLICAS}"
+
           echo "Image      : ${IMAGE}"
 
-          if [[ "${IMAGE}" != *":${IMAGE_TAG}" ]]; then
-            echo "ERROR: Incorrect image tag."
+          if [[ "${REPLICAS}" != "1" ]]; then
+
+            echo "ERROR: Target deployment does not have 1 replica."
+
             exit 1
+
           fi
 
-          echo "Target deployment image verified."
+          if [[ "${IMAGE}" != *":${IMAGE_TAG}" ]]; then
+
+            echo "ERROR: Incorrect image tag."
+
+            exit 1
+
+          fi
+
+          echo ""
+
+          echo "Target deployment verified."
 
 
-      # ============================================================
-      # 18. WAIT FOR TARGET POD
-      # ============================================================
+      # ==========================================================
+      # 18. VERIFY INACTIVE DEPLOYMENT
+      # ==========================================================
+
+      - name: Verify inactive deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${TARGET_COLOR}" == "blue" ]]; then
+
+            INACTIVE_COLOR="green"
+            INACTIVE_DEPLOYMENT="${GREEN_NAME}"
+
+          else
+
+            INACTIVE_COLOR="blue"
+            INACTIVE_DEPLOYMENT="${BLUE_NAME}"
+
+          fi
+
+          echo ""
+          echo "=================================================="
+          echo "INACTIVE DEPLOYMENT"
+          echo "=================================================="
+
+          echo "Deployment : ${INACTIVE_DEPLOYMENT}"
+
+          REPLICAS=$(kubectl get deployment "${INACTIVE_DEPLOYMENT}" \
+            -n "${NAMESPACE}" \
+            -o jsonpath='{.spec.replicas}')
+
+          IMAGE=$(kubectl get deployment "${INACTIVE_DEPLOYMENT}" \
+            -n "${NAMESPACE}" \
+            -o jsonpath='{.spec.template.spec.containers[0].image}')
+
+          echo "Color      : ${INACTIVE_COLOR}"
+
+          echo "Replicas   : ${REPLICAS}"
+
+          echo "Image      : ${IMAGE}"
+
+          if [[ "${SWITCH_TRAFFIC}" == "yes" ]]; then
+
+            if [[ "${REPLICAS}" != "0" ]]; then
+
+              echo "ERROR: Inactive deployment must have 0 replicas."
+
+              exit 1
+
+            fi
+
+          fi
+
+          if [[ "${IMAGE}" != *":${IMAGE_TAG}" ]]; then
+
+            echo "ERROR: Inactive deployment has incorrect image."
+
+            exit 1
+
+          fi
+
+          echo ""
+
+          echo "Inactive deployment verified."
+
+
+      # ==========================================================
+      # 19. WAIT FOR TARGET POD
+      # ==========================================================
 
       - name: Wait for target pod readiness
         shell: bash
@@ -681,7 +847,15 @@ jobs:
           set -euo pipefail
 
           echo ""
-          echo "Waiting for target payment-service pod..."
+          echo "=================================================="
+          echo "WAITING FOR TARGET POD"
+          echo "=================================================="
+
+          echo "Environment : ${TARGET_ENV}"
+
+          echo "Color       : ${TARGET_COLOR}"
+
+          echo "Image       : ${IMAGE_TAG}"
 
           kubectl wait \
             --namespace "${NAMESPACE}" \
@@ -690,12 +864,14 @@ jobs:
             -l "app=payment-service,color=${TARGET_COLOR}" \
             --timeout=180s
 
-          echo "Target pod is Ready."
+          echo ""
+
+          echo "Target payment-service pod is Ready."
 
 
-      # ============================================================
-      # 19. VERIFY PODS
-      # ============================================================
+      # ==========================================================
+      # 20. VERIFY PODS
+      # ==========================================================
 
       - name: Verify pods
         shell: bash
@@ -713,9 +889,9 @@ jobs:
             -o wide
 
 
-      # ============================================================
-      # 20. VERIFY SERVICE TRAFFIC
-      # ============================================================
+      # ==========================================================
+      # 21. VERIFY SERVICE TRAFFIC
+      # ==========================================================
 
       - name: Verify service traffic
         shell: bash
@@ -732,32 +908,43 @@ jobs:
           echo "=================================================="
 
           echo "Expected Color : ${TARGET_COLOR}"
+
           echo "Actual Color   : ${ACTUAL_COLOR}"
 
           if [[ "${SWITCH_TRAFFIC}" == "yes" ]]; then
 
             if [[ "${ACTUAL_COLOR}" != "${TARGET_COLOR}" ]]; then
+
               echo "ERROR: Service is NOT pointing to target color."
+
               exit 1
+
             fi
+
+            echo ""
 
             echo "Traffic successfully switched to ${TARGET_COLOR}."
 
           else
 
             if [[ "${ACTUAL_COLOR}" != "${CURRENT_COLOR}" ]]; then
+
               echo "ERROR: Existing traffic was unexpectedly changed."
+
               exit 1
+
             fi
 
-            echo "Traffic remains on existing active color: ${CURRENT_COLOR}"
+            echo ""
+
+            echo "Traffic remains on existing active color: ${CURRENT_COLOR}."
 
           fi
 
 
-      # ============================================================
-      # 21. FINAL DEPLOYMENT STATUS
-      # ============================================================
+      # ==========================================================
+      # 22. FINAL DEPLOYMENT STATUS
+      # ==========================================================
 
       - name: Final deployment status
         shell: bash
@@ -769,11 +956,17 @@ jobs:
             -o jsonpath='{.spec.selector.color}')
 
           if [[ "${ACTUAL_COLOR}" == "blue" ]]; then
+
             ACTIVE_NAME="${BLUE_NAME}"
             INACTIVE_NAME="${GREEN_NAME}"
+            INACTIVE_COLOR="green"
+
           else
+
             ACTIVE_NAME="${GREEN_NAME}"
             INACTIVE_NAME="${BLUE_NAME}"
+            INACTIVE_COLOR="blue"
+
           fi
 
           echo ""
@@ -781,13 +974,22 @@ jobs:
           echo "       BLUE-GREEN DEPLOYMENT COMPLETE"
           echo "=================================================="
 
+          echo ""
+
           echo "Environment    : ${TARGET_ENV^^}"
+
           echo "Image          : ${IMAGE_TAG}"
+
+          echo "Active Color   : ${ACTUAL_COLOR^^}"
+
           echo "Traffic        : 100% ${ACTUAL_COLOR^^}"
+
           echo "Namespace      : ${NAMESPACE}"
+
           echo "GitOps SHA     : ${GITOPS_SHA}"
 
           echo ""
+
           echo "=================================================="
           echo "ACTIVE"
           echo "=================================================="
@@ -799,6 +1001,7 @@ jobs:
             -o wide
 
           echo ""
+
           echo "Pods:"
 
           kubectl get pods \
@@ -807,6 +1010,7 @@ jobs:
             -o wide
 
           echo ""
+
           echo "=================================================="
           echo "INACTIVE"
           echo "=================================================="
@@ -818,23 +1022,29 @@ jobs:
             -o wide
 
           echo ""
+
+          echo "Inactive Color : ${INACTIVE_COLOR}"
+
           echo "Pods:"
 
           kubectl get pods \
             -n "${NAMESPACE}" \
-            -l "app=payment-service,color=$([[ "${ACTUAL_COLOR}" == "blue" ]] && echo green || echo blue)" \
+            -l "app=payment-service,color=${INACTIVE_COLOR}" \
             -o wide \
             || true
 
           echo ""
+
           echo "=================================================="
           echo "ARGO CD RESOURCE NAMES"
           echo "=================================================="
 
           echo "ACTIVE   : ${ACTIVE_NAME}"
+
           echo "INACTIVE : ${INACTIVE_NAME}"
 
           echo ""
+
           echo "=================================================="
           echo "          ALL VALIDATIONS PASSED"
           echo "=================================================="
