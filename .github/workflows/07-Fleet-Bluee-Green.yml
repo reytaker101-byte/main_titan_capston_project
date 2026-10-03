@@ -30,7 +30,7 @@ jobs:
 
   deploy:
     name: Deploy FLEET / PROD Blue Green
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     # Configure GitHub Environment "production"
     # with required reviewers for human approval.

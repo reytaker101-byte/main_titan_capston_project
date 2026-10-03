@@ -40,7 +40,7 @@ jobs:
 
   promote:
     name: Promote Image
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     env:
       SOURCE_ENV: ${{ inputs.source_environment }}

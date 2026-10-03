@@ -22,7 +22,7 @@ jobs:
 
   codeql:
     name: CodeQL
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     steps:
 
@@ -41,7 +41,7 @@ jobs:
   build-and-push:
     name: Build and Push Images
     needs: codeql
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     env:
       IMAGE_TAG: ${{ inputs.image_tag }}
