@@ -10,12 +10,28 @@ on:
         type: string
 
       target_color:
-        description: "Inactive color to deploy"
+        description: "Color to deploy"
         required: true
         type: choice
         options:
           - blue
           - green
+
+      target_traffic_percent:
+        description: "Traffic percentage for target color"
+        required: true
+        type: choice
+        options:
+          - "0"
+          - "100"
+
+      switch_traffic:
+        description: "Switch traffic to target after deployment?"
+        required: true
+        type: choice
+        options:
+          - "no"
+          - "yes"
 
 permissions:
   contents: write
@@ -35,26 +51,121 @@ jobs:
     env:
       IMAGE_TAG: ${{ inputs.image_tag }}
       COLOR: ${{ inputs.target_color }}
+      TRAFFIC_PERCENT: ${{ inputs.target_traffic_percent }}
+      SWITCH_TRAFFIC: ${{ inputs.switch_traffic }}
 
     steps:
+
+      # ==================================================
+      # 1. Checkout
+      # ==================================================
 
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Candidate deployment.
-      # Existing active color continues serving traffic.
+
+      # ==================================================
+      # 2. Validate inputs
+      # ==================================================
+
+      - name: Validate inputs
+        run: |
+
+          echo "=========================================="
+          echo "STAGE BLUE/GREEN INPUTS"
+          echo "=========================================="
+
+          echo "Image tag              : $IMAGE_TAG"
+          echo "Target color           : $COLOR"
+          echo "Target traffic         : ${TRAFFIC_PERCENT}%"
+          echo "Switch traffic         : $SWITCH_TRAFFIC"
+
+          echo ""
+
+          if [[ ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Invalid image tag."
+            echo "Expected format: vX.Y.Z"
+            exit 1
+          fi
+
+          # ------------------------------------------------
+          # Traffic safety validation
+          # ------------------------------------------------
+
+          if [ "$SWITCH_TRAFFIC" = "no" ] && [ "$TRAFFIC_PERCENT" != "0" ]; then
+            echo "ERROR:"
+            echo "When switch_traffic=no, target traffic must be 0%."
+            exit 1
+          fi
+
+          if [ "$SWITCH_TRAFFIC" = "yes" ] && [ "$TRAFFIC_PERCENT" != "100" ]; then
+            echo "ERROR:"
+            echo "When switch_traffic=yes, target traffic must be 100%."
+            exit 1
+          fi
+
+          echo ""
+          echo "Input validation passed."
+
+
+      # ==================================================
+      # 3. Determine old color
+      # ==================================================
+
+      - name: Determine old color
+        run: |
+
+          if [ "$COLOR" = "blue" ]; then
+            OLD_COLOR="green"
+          else
+            OLD_COLOR="blue"
+          fi
+
+          echo "OLD_COLOR=$OLD_COLOR" >> "$GITHUB_ENV"
+
+          echo "=========================================="
+          echo "COLOR PLAN"
+          echo "=========================================="
+
+          echo "Candidate color : $COLOR"
+          echo "Current color   : $OLD_COLOR"
+
+
+      # ==================================================
+      # 4. Prepare candidate manifest
+      # ==================================================
+
       - name: Prepare candidate manifest
         run: |
 
           FILE="devops-infra/kubernetes/manifests/stage-payment-service-${COLOR}.yaml"
 
+          echo "=========================================="
+          echo "PREPARING CANDIDATE"
+          echo "=========================================="
+
+          echo "File:"
+          echo "$FILE"
+
+          # Always replace the existing image tag.
+          # Supports v1.1.0 -> v1.2.0 -> v1.3.0 etc.
           sed -i \
-            "s/__IMAGE_TAG__/${IMAGE_TAG}/g" \
+            "s|\(image: .*payment-service:\).*|\1${IMAGE_TAG}|" \
             "$FILE"
 
+          # Candidate must run before traffic switch.
           sed -i \
-            "s/replicas: 0/replicas: 1/" \
+            's/^  replicas: .*/  replicas: 1/' \
             "$FILE"
+
+          echo ""
+          echo "Candidate manifest:"
+          cat "$FILE"
+
+
+      # ==================================================
+      # 5. Commit candidate deployment
+      # ==================================================
 
       - name: Commit candidate deployment
         run: |
@@ -62,20 +173,37 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add devops-infra/kubernetes/manifests/
+          git add \
+            "devops-infra/kubernetes/manifests/stage-payment-service-${COLOR}.yaml"
 
-          git diff --cached --quiet || \
+          if git diff --cached --quiet; then
+
+            echo "No candidate manifest changes."
+
+          else
+
             git commit \
               -m "deploy: STAGE candidate ${IMAGE_TAG} ${COLOR}"
 
-          git push
+            git push
 
-      # Argo CD deploys the Git change to GKE.
+          fi
+
+
+      # ==================================================
+      # 6. Authenticate to GCP
+      # ==================================================
+
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+
+      # ==================================================
+      # 7. Get GKE credentials
+      # ==================================================
 
       - name: Get GKE credentials
         uses: google-github-actions/get-gke-credentials@v2
@@ -84,36 +212,309 @@ jobs:
           location: ${{ env.GCP_REGION }}
           project_id: ${{ env.GCP_PROJECT_ID }}
 
+
+      # ==================================================
+      # 8. Verify target is actually inactive
+      # ==================================================
+
+      - name: Verify target color is inactive
+        run: |
+
+          ACTIVE_COLOR=$(kubectl get svc payment-service \
+            -n ai-sre-stage \
+            -o jsonpath='{.spec.selector.color}')
+
+          echo "Current active color: $ACTIVE_COLOR"
+          echo "Requested target color: $COLOR"
+
+          if [ "$ACTIVE_COLOR" = "$COLOR" ]; then
+
+            echo "ERROR:"
+            echo "Target color '$COLOR' is already ACTIVE."
+            echo "Blue/Green deployment must target the inactive color."
+
+            exit 1
+          fi
+
+          echo "Target color '$COLOR' is inactive. Safe to deploy."
+
+
+      # ==================================================
+      # 9. Wait for Argo CD candidate deployment
+      # ==================================================
+
       - name: Wait for candidate rollout
         run: |
+
+          DEPLOYMENT="payment-service-${COLOR}"
+
+          echo "=========================================="
+          echo "WAITING FOR CANDIDATE"
+          echo "=========================================="
+
+          echo "Deployment : $DEPLOYMENT"
+          echo "Image      : $IMAGE_TAG"
+
+          for i in {1..60}; do
+
+            IMAGE=$(kubectl get deployment "$DEPLOYMENT" \
+              -n ai-sre-stage \
+              -o jsonpath='{.spec.template.spec.containers[0].image}' \
+              2>/dev/null || true)
+
+            READY=$(kubectl get deployment "$DEPLOYMENT" \
+              -n ai-sre-stage \
+              -o jsonpath='{.status.readyReplicas}' \
+              2>/dev/null || true)
+
+            DESIRED=$(kubectl get deployment "$DEPLOYMENT" \
+              -n ai-sre-stage \
+              -o jsonpath='{.spec.replicas}' \
+              2>/dev/null || true)
+
+            echo "Image=$IMAGE | Ready=$READY | Desired=$DESIRED"
+
+            if [[ "$IMAGE" == *":${IMAGE_TAG}" ]] && \
+               [[ "$READY" == "1" ]] && \
+               [[ "$DESIRED" == "1" ]]; then
+
+              echo ""
+              echo "Candidate is HEALTHY."
+              break
+
+            fi
+
+            if [ "$i" -eq 60 ]; then
+
+              echo ""
+              echo "ERROR: Candidate did not become healthy."
+
+              kubectl get deployment "$DEPLOYMENT" \
+                -n ai-sre-stage
+
+              kubectl get pods \
+                -n ai-sre-stage \
+                -o wide
+
+              kubectl describe deployment "$DEPLOYMENT" \
+                -n ai-sre-stage
+
+              exit 1
+
+            fi
+
+            sleep 5
+
+          done
+
+
+      # ==================================================
+      # 10. Verify candidate pod
+      # ==================================================
+
+      - name: Verify candidate pod
+        run: |
+
+          echo "=========================================="
+          echo "CANDIDATE POD"
+          echo "=========================================="
+
+          kubectl get pods \
+            -n ai-sre-stage \
+            -l "app=payment-service,color=${COLOR},environment=stage" \
+            -o wide
 
           kubectl rollout status \
             deployment/payment-service-${COLOR} \
             -n ai-sre-stage \
-            --timeout=300s
+            --timeout=120s
 
-      # Switch traffic only after candidate is healthy.
-      - name: Switch STAGE active color
+
+      # ==================================================
+      # 11. Keep candidate inactive
+      # ==================================================
+
+      - name: Keep candidate inactive
+        if: ${{ env.SWITCH_TRAFFIC == 'no' }}
         run: |
 
-          sed -i \
-            "s/color: blue/color: ${COLOR}/" \
-            devops-infra/kubernetes/manifests/stage-payment-service-service.yaml
+          echo "=========================================="
+          echo "CANDIDATE DEPLOYED — NO TRAFFIC SWITCH"
+          echo "=========================================="
+
+          echo "Candidate color : $COLOR"
+          echo "Image           : $IMAGE_TAG"
+          echo "Traffic         : 0%"
+          echo ""
+          echo "Existing active color remains:"
+          echo "$OLD_COLOR = 100%"
+
+          echo ""
+          echo "Blue/Green candidate is ready for testing."
+
+          kubectl get svc payment-service \
+            -n ai-sre-stage \
+            -o jsonpath='Active color: {.spec.selector.color}{"\n"}'
+
+          kubectl get deployments \
+            -n ai-sre-stage
+
+
+      # ==================================================
+      # 12. Switch traffic
+      # ==================================================
+
+      - name: Switch STAGE traffic
+        if: ${{ env.SWITCH_TRAFFIC == 'yes' }}
+        run: |
+
+          SERVICE_FILE="devops-infra/kubernetes/manifests/stage-payment-service-service.yaml"
+
+          echo "=========================================="
+          echo "TRAFFIC SWITCH"
+          echo "=========================================="
+
+          echo "Old active color : $OLD_COLOR"
+          echo "New active color : $COLOR"
+          echo "New traffic      : 100%"
 
           sed -i \
-            "s/color: green/color: ${COLOR}/" \
-            devops-infra/kubernetes/manifests/stage-payment-service-service.yaml
+            "s/color: ${OLD_COLOR}/color: ${COLOR}/" \
+            "$SERVICE_FILE"
+
+          echo ""
+          echo "Updated service manifest:"
+          cat "$SERVICE_FILE"
+
+
+      # ==================================================
+      # 13. Scale old color to zero
+      # ==================================================
+
+      - name: Scale old color to zero
+        if: ${{ env.SWITCH_TRAFFIC == 'yes' }}
+        run: |
+
+          OLD_FILE="devops-infra/kubernetes/manifests/stage-payment-service-${OLD_COLOR}.yaml"
+
+          echo "=========================================="
+          echo "SCALING OLD COLOR"
+          echo "=========================================="
+
+          echo "Old color: $OLD_COLOR"
+          echo "Replicas : 0"
+
+          sed -i \
+            's/^  replicas: .*/  replicas: 0/' \
+            "$OLD_FILE"
+
+          echo ""
+          echo "Updated old-color manifest:"
+          cat "$OLD_FILE"
+
+
+      # ==================================================
+      # 14. Commit traffic switch
+      # ==================================================
 
       - name: Commit STAGE traffic switch
+        if: ${{ env.SWITCH_TRAFFIC == 'yes' }}
         run: |
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add \
-            devops-infra/kubernetes/manifests/stage-payment-service-service.yaml
+            devops-infra/kubernetes/manifests/stage-payment-service-service.yaml \
+            "devops-infra/kubernetes/manifests/stage-payment-service-${OLD_COLOR}.yaml"
 
           git commit \
-            -m "switch: STAGE traffic to ${COLOR} ${IMAGE_TAG}" || true
+            -m "switch: STAGE traffic to ${COLOR} ${IMAGE_TAG}"
 
           git push
+
+
+      # ==================================================
+      # 15. Verify traffic switch
+      # ==================================================
+
+      - name: Verify STAGE active color
+        if: ${{ env.SWITCH_TRAFFIC == 'yes' }}
+        run: |
+
+          echo "=========================================="
+          echo "VERIFYING TRAFFIC SWITCH"
+          echo "=========================================="
+
+          for i in {1..60}; do
+
+            ACTIVE_COLOR=$(kubectl get svc payment-service \
+              -n ai-sre-stage \
+              -o jsonpath='{.spec.selector.color}' \
+              2>/dev/null || true)
+
+            echo "Current active color: $ACTIVE_COLOR"
+
+            if [ "$ACTIVE_COLOR" = "$COLOR" ]; then
+
+              echo ""
+              echo "Traffic successfully switched to $COLOR."
+              break
+
+            fi
+
+            if [ "$i" -eq 60 ]; then
+
+              echo ""
+              echo "ERROR: Traffic switch was not applied."
+
+              kubectl get svc payment-service \
+                -n ai-sre-stage \
+                -o yaml
+
+              exit 1
+
+            fi
+
+            sleep 5
+
+          done
+
+
+      # ==================================================
+      # 16. Final status
+      # ==================================================
+
+      - name: Final STAGE status
+        run: |
+
+          echo ""
+          echo "=========================================="
+          echo "FINAL STAGE BLUE/GREEN STATUS"
+          echo "=========================================="
+
+          echo ""
+          echo "Active traffic color:"
+
+          kubectl get svc payment-service \
+            -n ai-sre-stage \
+            -o jsonpath='{.spec.selector.color}{"\n"}'
+
+          echo ""
+          echo "Deployments:"
+
+          kubectl get deployments \
+            -n ai-sre-stage
+
+          echo ""
+          echo "Pods:"
+
+          kubectl get pods \
+            -n ai-sre-stage \
+            -o wide
+
+          echo ""
+          echo "Service:"
+
+          kubectl get svc payment-service \
+            -n ai-sre-stage
