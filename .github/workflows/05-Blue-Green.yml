@@ -186,8 +186,8 @@ jobs:
 
           echo ""
           echo "Updated image tag:"
-          echo "  BLUE  = ${IMAGE_TAG}"
-          echo "  GREEN = ${IMAGE_TAG}"
+          echo "BLUE  = ${IMAGE_TAG}"
+          echo "GREEN = ${IMAGE_TAG}"
 
       # ============================================================
       # 6. Configure BLUE/GREEN replicas
@@ -259,7 +259,7 @@ jobs:
           grep -A3 "selector:" "${SERVICE_FILE}"
 
       # ============================================================
-      # 8. Display final GitOps configuration
+      # 8. Show final GitOps configuration
       # ============================================================
       - name: Show rendered GitOps configuration
         shell: bash
@@ -307,8 +307,6 @@ jobs:
             git push
           fi
 
-          # IMPORTANT:
-          # This is the Git commit containing the desired GitOps state.
           GITOPS_SHA=$(git rev-parse HEAD)
 
           echo ""
