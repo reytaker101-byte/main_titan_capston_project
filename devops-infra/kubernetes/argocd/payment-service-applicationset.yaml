@@ -1,0 +1,49 @@
+apiVersion: argoproj.io/v1alpha1                    # Defines the Argo CD API version used for ApplicationSet
+
+kind: ApplicationSet                                # Tells Kubernetes that this resource is an Argo CD ApplicationSet
+
+metadata:                                           # Contains metadata about the ApplicationSet
+  name: payment-service                             # Name of the ApplicationSet for the payment microservice
+
+spec:                                               # Defines the desired configuration of the ApplicationSet
+  generators:                                       # Defines how Argo CD will generate Applications
+    - list:                                         # Uses a static list of environments
+        elements:                                   # Contains the environments that will be created
+
+          - environment: dev                       # Creates the DEV Argo CD Application
+            namespace: payment-dev                  # Deploys DEV resources into the payment-dev namespace
+            valuesFile: values-dev.yaml             # Uses the DEV-specific Helm values file
+
+          - environment: stage                     # Creates the STAGE Argo CD Application
+            namespace: payment-stage                # Deploys STAGE resources into the payment-stage namespace
+            valuesFile: values-stage.yaml           # Uses the STAGE-specific Helm values file
+
+          - environment: prod                      # Creates the PROD Argo CD Application
+            namespace: payment-prod                 # Deploys PROD resources into the payment-prod namespace
+            valuesFile: values-prod.yaml            # Uses the PROD-specific Helm values file
+
+  template:                                         # Defines the common template for all generated Applications
+    metadata:                                       # Defines metadata for each generated Application
+      name: 'payment-service-{{environment}}'       # Application name is generated dynamically using the environment value
+
+    spec:                                           # Defines the configuration of each generated Application
+      project: default                              # Places the generated Applications in the Argo CD default project
+
+      source:                                       # Defines where Argo CD gets the deployment configuration from
+        repoURL: REPLACE_WITH_YOUR_GIT_REPOSITORY   # Git repository containing the Helm chart and Kubernetes configuration
+        targetRevision: main                        # Tells Argo CD to use the main branch of the Git repository
+        path: devops-infra/kubernetes/payment-service/helm  # Location of the payment-service Helm chart inside the repository
+
+        helm:                                       # Tells Argo CD to deploy the source using Helm
+          valueFiles:                               # Defines which Helm values files should be loaded
+            - values.yaml                            # Loads the common/default Helm configuration
+            - '{{valuesFile}}'                        # Dynamically loads values-dev, values-stage or values-prod based on the environment
+
+      destination:                                  # Defines where Argo CD should deploy the application
+        server: https://kubernetes.default.svc       # Kubernetes API server of the cluster where Argo CD is running
+        namespace: '{{namespace}}'                   # Dynamically selects payment-dev, payment-stage or payment-prod namespace
+
+      syncPolicy:                                   # Defines how Argo CD keeps Git and Kubernetes synchronized
+        automated:                                  # Enables automatic synchronization instead of requiring manual Sync
+          prune: true                               # Deletes Kubernetes resources that are removed from Git
+          selfHeal: true                            # Automatically restores resources if someone manually changes them in Kubernetes
