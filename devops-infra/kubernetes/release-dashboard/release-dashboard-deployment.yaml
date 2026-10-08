@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: release-dashboard
+  template:
+    metadata:
+      labels:
+        app: release-dashboard
+    spec:
+      serviceAccountName: release-dashboard
+      containers:
+        - name: release-dashboard
+          image: REPLACE_WITH_RELEASE_DASHBOARD_IMAGE
+          ports:
+            - containerPort: 8080

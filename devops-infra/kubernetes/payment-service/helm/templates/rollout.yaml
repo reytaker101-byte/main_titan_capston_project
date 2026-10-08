@@ -1,0 +1,36 @@
+{{- if .Values.rollout.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ include "payment-service.fullname" . }}
+  labels:
+    app: {{ include "payment-service.name" . }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: {{ include "payment-service.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "payment-service.name" . }}
+    spec:
+      containers:
+        - name: payment-service
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          env:
+{{ toYaml .Values.env | indent 12 }}
+  strategy:
+    blueGreen:
+      activeService: {{ include "payment-service.fullname" . }}-active
+      previewService: {{ include "payment-service.fullname" . }}-preview
+      autoPromotionEnabled: {{ .Values.rollout.autoPromotionEnabled }}
+      scaleDownDelaySeconds: {{ .Values.rollout.scaleDownDelaySeconds }}
+{{- end }}

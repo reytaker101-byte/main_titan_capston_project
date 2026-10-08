@@ -1,0 +1,4 @@
+# Application monitoring is now primarily represented by the
+# ServiceMonitor inside the payment-service Helm chart.
+# Keep this file only if the existing monitoring stack specifically
+# requires a PodMonitor instead of ServiceMonitor.

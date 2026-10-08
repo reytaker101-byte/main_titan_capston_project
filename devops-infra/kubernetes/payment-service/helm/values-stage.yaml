@@ -1,0 +1,8 @@
+replicaCount: 2
+
+image:
+  tag: v1.1.0
+
+rollout:
+  autoPromotionEnabled: false
+  scaleDownDelaySeconds: 30

@@ -1,0 +1,36 @@
+replicaCount: 2
+
+image:
+  repository: REPLACE_WITH_ECR_REPOSITORY
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+rollout:
+  enabled: true
+  autoPromotionEnabled: false
+  scaleDownDelaySeconds: 30
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  path: /metrics
+
+ingress:
+  enabled: false
+  className: nginx
+  host: payment-service.example.com
+
+env: []
