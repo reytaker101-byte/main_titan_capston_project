@@ -30,7 +30,7 @@ spec:                                               # Defines the desired config
       project: default                              # Places the generated Applications in the Argo CD default project
 
       source:                                       # Defines where Argo CD gets the deployment configuration from
-        repoURL: REPLACE_WITH_YOUR_GIT_REPOSITORY   # Git repository containing the Helm chart and Kubernetes configuration
+        repoURL: https://github.com/reytaker101-byte/main_titan_capston_project.git  # Git repository containing the Helm chart and Kubernetes configuration
         targetRevision: main                        # Tells Argo CD to use the main branch of the Git repository
         path: devops-infra/kubernetes/payment-service/helm  # Location of the payment-service Helm chart inside the repository
 
