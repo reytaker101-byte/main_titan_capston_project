@@ -12,20 +12,20 @@ permissions:
   contents: read
   id-token: write
   security-events: write
+  packages: write
 
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GCP_REGION: asia-southeast1
   GAR_REPOSITORY: main-titan-capston-project-artifactory-repo
+  GHCR_OWNER: reytaker101-byte
 
 jobs:
-
   codeql:
     name: CodeQL
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -37,9 +37,8 @@ jobs:
       - name: Analyze with CodeQL
         uses: github/codeql-action/analyze@v3
 
-
   build-and-push:
-    name: Build and Push Images
+    name: Build, Push and Mirror Images
     needs: codeql
     runs-on: ubuntu-latest
 
@@ -47,15 +46,14 @@ jobs:
       IMAGE_TAG: ${{ inputs.image_tag }}
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Validate tag
+        shell: bash
         run: |
           if [[ ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "ERROR: Invalid image tag."
-            echo "Expected: v<major>.<minor>.<patch>"
+            echo "ERROR: Expected image tag v<major>.<minor>.<patch>"
             exit 1
           fi
 
@@ -67,46 +65,107 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      - name: Configure Docker
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GCP Artifact Registry
         run: |
           gcloud auth configure-docker \
             "${GCP_REGION}-docker.pkg.dev" \
             --quiet
 
-      - name: Build and push payment-service
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push payment-service to GCP and GHCR
+        id: payment
+        shell: bash
         run: |
+          set -euo pipefail
 
-          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/payment-service:${IMAGE_TAG}"
+          GAR_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/payment-service:${IMAGE_TAG}"
+          GAR_SHA_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/payment-service:${GITHUB_SHA}"
 
-          echo "Building:"
-          echo "$IMAGE"
+          GHCR_IMAGE="ghcr.io/${GHCR_OWNER}/payment-service:${IMAGE_TAG}"
+          GHCR_SHA_IMAGE="ghcr.io/${GHCR_OWNER}/payment-service:${GITHUB_SHA}"
 
           docker build \
-            -t "$IMAGE" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.version=${IMAGE_TAG}" \
+            -t "$GAR_IMAGE" \
+            -t "$GAR_SHA_IMAGE" \
+            -t "$GHCR_IMAGE" \
+            -t "$GHCR_SHA_IMAGE" \
             ./services/payment-service
 
-          docker push "$IMAGE"
+          docker push "$GAR_IMAGE"
+          docker push "$GAR_SHA_IMAGE"
+          docker push "$GHCR_IMAGE"
+          docker push "$GHCR_SHA_IMAGE"
 
-          gcloud artifacts docker images describe "$IMAGE"
+          GAR_DIGEST=$(gcloud artifacts docker images describe \
+            "$GAR_IMAGE" \
+            --format='value(image_summary.digest)')
 
-      - name: Build and push release-dashboard
+          echo "payment_image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "payment_image_digest=${GAR_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "payment_gar_image=${GAR_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "payment_ghcr_image=${GHCR_IMAGE}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push release-dashboard to GCP and GHCR
+        id: dashboard
+        shell: bash
         run: |
+          set -euo pipefail
 
-          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/release-dashboard:${IMAGE_TAG}"
+          GAR_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/release-dashboard:${IMAGE_TAG}"
+          GAR_SHA_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/release-dashboard:${GITHUB_SHA}"
 
-          echo "Building:"
-          echo "$IMAGE"
+          GHCR_IMAGE="ghcr.io/${GHCR_OWNER}/release-dashboard:${IMAGE_TAG}"
+          GHCR_SHA_IMAGE="ghcr.io/${GHCR_OWNER}/release-dashboard:${GITHUB_SHA}"
 
-          docker build -t "$IMAGE" ./devops-infra/release-dashboard
+          docker build \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.version=${IMAGE_TAG}" \
+            -t "$GAR_IMAGE" \
+            -t "$GAR_SHA_IMAGE" \
+            -t "$GHCR_IMAGE" \
+            -t "$GHCR_SHA_IMAGE" \
+            ./devops-infra/release-dashboard
 
-          docker push "$IMAGE"
+          docker push "$GAR_IMAGE"
+          docker push "$GAR_SHA_IMAGE"
+          docker push "$GHCR_IMAGE"
+          docker push "$GHCR_SHA_IMAGE"
 
-          gcloud artifacts docker images describe "$IMAGE"
+          GAR_DIGEST=$(gcloud artifacts docker images describe \
+            "$GAR_IMAGE" \
+            --format='value(image_summary.digest)')
+
+          echo "dashboard_image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "dashboard_image_digest=${GAR_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "dashboard_gar_image=${GAR_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "dashboard_ghcr_image=${GHCR_IMAGE}" >> "$GITHUB_OUTPUT"
 
       - name: Build summary
+        shell: bash
         run: |
-          echo "=========================================="
-          echo "DEV BUILD SUCCESSFUL"
-          echo "=========================================="
-          echo "payment-service       : $IMAGE_TAG"
-          echo "release-dashboard     : $IMAGE_TAG"
+          {
+            echo "## DEV Build and Registry Mirror"
+            echo ""
+            echo "| Artifact | Tag | GCP Artifact Registry | GHCR mirror |"
+            echo "|---|---|---|---|"
+            echo "| payment-service | ${IMAGE_TAG} | \`${{ steps.payment.outputs.payment_gar_image }}\` | \`${{ steps.payment.outputs.payment_ghcr_image }}\` |"
+            echo "| release-dashboard | ${IMAGE_TAG} | \`${{ steps.dashboard.outputs.dashboard_gar_image }}\` | \`${{ steps.dashboard.outputs.dashboard_ghcr_image }}\` |"
+            echo ""
+            echo "Source commit: \`${GITHUB_SHA}\`"
+            echo ""
+            echo "GCP payment-service digest: \`${{ steps.payment.outputs.payment_image_digest }}\`"
+            echo "GCP release-dashboard digest: \`${{ steps.dashboard.outputs.dashboard_image_digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
