@@ -650,7 +650,7 @@ footer {
 </section>
 
 <section class="section">
-    <h2>Feature 1 — Environment Release Matrix</h2>
+    <h2>Environment Release Matrix</h2>
     <div class="tablewrap">
         <table>
             <thead>
@@ -672,7 +672,7 @@ footer {
 </section>
 
 <section class="section">
-    <h2>Feature 4 — Rollback Information</h2>
+    <h2>Rollback Information</h2>
     <div class="tablewrap">
         <table>
             <thead>
@@ -688,14 +688,12 @@ footer {
         </table>
     </div>
     <p class="muted">
-        Read-only information only. This dashboard does not execute
-        rollback. For Argo Rollouts, implement Rollout CRD history
-        instead of Deployment ReplicaSet history.
+        Read-only information. Rollback is not executed by this dashboard.
     </p>
 </section>
 
 <section class="section">
-    <h2>Feature 2 — Recent Release History</h2>
+    <h2>Recent Release History</h2>
     <div class="tablewrap">
         <table>
             <thead>
@@ -717,13 +715,13 @@ footer {
 </section>
 
 <section class="section">
-    <h2>Feature 5 — Deployment Health</h2>
+    <h2>Deployment Health Summary</h2>
     <div id="summary" class="summary"></div>
 </section>
 
 <footer>
     Last updated: <b id="updated">—</b>
-    • Data sources: Kubernetes API and GitHub Actions API.
+    • Sources: Kubernetes API and GitHub Actions API.
 </footer>
 </main>
 
@@ -815,7 +813,7 @@ function render(data) {
                         ${
                             status.previous_image &&
                             status.previous_image !== "NA"
-                            ? "Previous image found; verify and use controlled rollback procedure."
+                            ? "Previous image found; verify before rollback."
                             : "No previous image found in retained ReplicaSets."
                         }
                     </td>
@@ -866,11 +864,11 @@ function render(data) {
     );
 
     const summaryItems = [
-        ["Environments / colors", columns.length],
+        ["Environments / deployments", columns.length],
         ["Healthy", count("healthy")],
         ["Degraded", count("warning")],
         ["Unavailable", count("error")],
-        ["Observed Pod restarts", restarts]
+        ["Observed pod restarts", restarts]
     ];
 
     document.getElementById("summary").innerHTML =
