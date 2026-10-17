@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Payment Service release tag, e.g. v1.1.0"
-        required: true
+        description: "Optional release tag, e.g. v1.2.1. Leave blank for automatic SHA tag."
+        required: false
         type: string
 
 permissions:
@@ -25,23 +25,51 @@ jobs:
     name: Build and Push Application Images
     runs-on: ubuntu-latest
 
-    env:
-      IMAGE_TAG: ${{ inputs.image_tag }}
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+      payment_image: ${{ steps.images.outputs.payment_image }}
+      payment_sha_image: ${{ steps.images.outputs.payment_sha_image }}
+      dashboard_image: ${{ steps.images.outputs.dashboard_image }}
+      commit_sha: ${{ github.sha }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate image tag
+      # ------------------------------------------
+      # Generate and validate image tag
+      # ------------------------------------------
+      - name: Generate image tag
+        id: tag
         shell: bash
+        env:
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
 
-          if [[ ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid tag. Expected v<major>.<minor>.<patch>"
-            exit 1
+          # Remove leading/trailing whitespace.
+          RELEASE_TAG="$(printf '%s' "$INPUT_IMAGE_TAG" | xargs)"
+
+          # Use supplied release tag, or generate one from the commit.
+          if [[ -n "$RELEASE_TAG" ]]; then
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Invalid release tag. Expected v<major>.<minor>.<patch>, e.g. v1.2.1"
+              exit 1
+            fi
+
+            IMAGE_TAG="$RELEASE_TAG"
+          else
+            IMAGE_TAG="sha-${GITHUB_SHA::7}"
           fi
 
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+
+          echo "Using image tag: $IMAGE_TAG"
+
+      # ------------------------------------------
+      # Authenticate to Google Cloud
+      # ------------------------------------------
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
@@ -52,11 +80,17 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure Docker for GCP Artifact Registry
+        shell: bash
         run: |
+          set -euo pipefail
+
           gcloud auth configure-docker \
             "${GCP_REGION}-docker.pkg.dev" \
             --quiet
 
+      # ------------------------------------------
+      # Authenticate to GHCR
+      # ------------------------------------------
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -65,18 +99,45 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # ------------------------------------------
+      # Define image names
+      # ------------------------------------------
+      - name: Define image names
+        id: images
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          GAR_BASE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}"
+
+          PAYMENT_IMAGE="${GAR_BASE}/dev/payment-service:${IMAGE_TAG}"
+          PAYMENT_SHA_IMAGE="${GAR_BASE}/dev/payment-service:sha-${GITHUB_SHA::7}"
+
+          PAYMENT_GHCR_IMAGE="ghcr.io/${GHCR_OWNER}/payment-service:${IMAGE_TAG}"
+          PAYMENT_GHCR_SHA_IMAGE="ghcr.io/${GHCR_OWNER}/payment-service:sha-${GITHUB_SHA::7}"
+
+          DASHBOARD_IMAGE="${GAR_BASE}/${DASHBOARD_IMAGE_NAME}:${IMAGE_TAG}"
+          DASHBOARD_SHA_IMAGE="${GAR_BASE}/${DASHBOARD_IMAGE_NAME}:sha-${GITHUB_SHA::7}"
+
+          echo "payment_image=$PAYMENT_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "payment_sha_image=$PAYMENT_SHA_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "dashboard_image=$DASHBOARD_IMAGE" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "GAR_IMAGE=$PAYMENT_IMAGE"
+            echo "GAR_SHA_IMAGE=$PAYMENT_SHA_IMAGE"
+            echo "GHCR_IMAGE=$PAYMENT_GHCR_IMAGE"
+            echo "GHCR_SHA_IMAGE=$PAYMENT_GHCR_SHA_IMAGE"
+            echo "DASHBOARD_GAR_IMAGE=$DASHBOARD_IMAGE"
+            echo "DASHBOARD_GAR_SHA_IMAGE=$DASHBOARD_SHA_IMAGE"
+          } >> "$GITHUB_ENV"
+
+      # ------------------------------------------
       # Build Payment Service
       # ------------------------------------------
       - name: Build Payment Service image
         shell: bash
         run: |
           set -euo pipefail
-
-          GAR_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/payment-service:${IMAGE_TAG}"
-          GAR_SHA_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/payment-service:${GITHUB_SHA}"
-
-          GHCR_IMAGE="ghcr.io/${GHCR_OWNER}/payment-service:${IMAGE_TAG}"
-          GHCR_SHA_IMAGE="ghcr.io/${GHCR_OWNER}/payment-service:${GITHUB_SHA}"
 
           docker build \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
@@ -87,11 +148,6 @@ jobs:
             -t "$GHCR_IMAGE" \
             -t "$GHCR_SHA_IMAGE" \
             ./services/payment-service
-
-          echo "GAR_IMAGE=$GAR_IMAGE" >> "$GITHUB_ENV"
-          echo "GAR_SHA_IMAGE=$GAR_SHA_IMAGE" >> "$GITHUB_ENV"
-          echo "GHCR_IMAGE=$GHCR_IMAGE" >> "$GITHUB_ENV"
-          echo "GHCR_SHA_IMAGE=$GHCR_SHA_IMAGE" >> "$GITHUB_ENV"
 
       - name: Push Payment Service to GCP Artifact Registry
         shell: bash
@@ -117,9 +173,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          DASHBOARD_GAR_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/${DASHBOARD_IMAGE_NAME}:${IMAGE_TAG}"
-          DASHBOARD_GAR_SHA_IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/${DASHBOARD_IMAGE_NAME}:${GITHUB_SHA}"
-
           docker build \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
@@ -127,9 +180,6 @@ jobs:
             -t "$DASHBOARD_GAR_IMAGE" \
             -t "$DASHBOARD_GAR_SHA_IMAGE" \
             ./devops-infra/release-dashboard
-
-          echo "DASHBOARD_GAR_IMAGE=$DASHBOARD_GAR_IMAGE" >> "$GITHUB_ENV"
-          echo "DASHBOARD_GAR_SHA_IMAGE=$DASHBOARD_GAR_SHA_IMAGE" >> "$GITHUB_ENV"
 
       - name: Push Release Dashboard to GCP Artifact Registry
         shell: bash
@@ -148,12 +198,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          DIGEST=$(gcloud artifacts docker images describe \
+          DIGEST="$(gcloud artifacts docker images describe \
             "$GAR_IMAGE" \
-            --format='value(image_summary.digest)')
+            --format='value(image_summary.digest)')"
 
           if [[ -z "$DIGEST" ]]; then
-            echo "Payment Service image digest not found"
+            echo "::error::Payment Service image digest not found"
             exit 1
           fi
 
@@ -165,12 +215,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          DIGEST=$(gcloud artifacts docker images describe \
+          DIGEST="$(gcloud artifacts docker images describe \
             "$DASHBOARD_GAR_IMAGE" \
-            --format='value(image_summary.digest)')
+            --format='value(image_summary.digest)')"
 
           if [[ -z "$DIGEST" ]]; then
-            echo "Release Dashboard image digest not found"
+            echo "::error::Release Dashboard image digest not found"
             exit 1
           fi
 
@@ -181,22 +231,25 @@ jobs:
       # ------------------------------------------
       - name: Build summary
         shell: bash
+        env:
+          PAYMENT_DIGEST: ${{ steps.verify-payment.outputs.image_digest }}
+          DASHBOARD_DIGEST: ${{ steps.verify-dashboard.outputs.image_digest }}
         run: |
           {
             echo "## Application Image Build Summary"
             echo ""
             echo "### Payment Service"
-            echo "- Tag: ${IMAGE_TAG}"
+            echo "- Image tag: ${IMAGE_TAG}"
             echo "- Commit: ${GITHUB_SHA}"
             echo "- GAR image: ${GAR_IMAGE}"
-            echo "- GAR digest: ${{ steps.verify-payment.outputs.image_digest }}"
+            echo "- GAR digest: ${PAYMENT_DIGEST}"
             echo "- GHCR image: ${GHCR_IMAGE}"
             echo ""
             echo "### Release Dashboard"
-            echo "- Tag: ${IMAGE_TAG}"
+            echo "- Image tag: ${IMAGE_TAG}"
             echo "- Commit: ${GITHUB_SHA}"
             echo "- GAR image: ${DASHBOARD_GAR_IMAGE}"
-            echo "- GAR digest: ${{ steps.verify-dashboard.outputs.image_digest }}"
+            echo "- GAR digest: ${DASHBOARD_DIGEST}"
             echo ""
             echo "Both application images were built and pushed."
           } >> "$GITHUB_STEP_SUMMARY"
