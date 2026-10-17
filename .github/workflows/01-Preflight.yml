@@ -23,7 +23,7 @@ env:
   GCP_REGION: asia-southeast1
   GKE_CLUSTER: main-titan-capston-project-cluster
   ARGOCD_NAMESPACE: argocd
-  ROLLOUTS_NAMESPACE: argo-rollouts
+  ROLLOUTS_NAMESPACE: default
   DASHBOARD_NAMESPACE: release-dashboard
 
 jobs:
@@ -159,8 +159,8 @@ jobs:
 
       # --------------------------------------------------
       # INSTALL ARGO ROLLOUTS
-      # Keep CRDs cluster-scoped; put controller resources
-      # in the argo-rollouts namespace.
+      # Keep controller in default namespace.
+      # Do not rewrite or move upstream resources.
       # --------------------------------------------------
 
       - name: Install Argo Rollouts controller
@@ -179,13 +179,7 @@ jobs:
 
           test -s "$ROLLOUTS_MANIFEST"
 
-          echo "Applying Argo Rollouts manifest..."
-
-          # The upstream manifest may explicitly specify "default".
-          # Change only that namespace to argo-rollouts.
-          sed -i \
-            's/namespace: default/namespace: argo-rollouts/g' \
-            "$ROLLOUTS_MANIFEST"
+          echo "Applying upstream Argo Rollouts manifest..."
 
           kubectl apply \
             --server-side \
@@ -209,50 +203,17 @@ jobs:
             crd/analysistemplates.argoproj.io \
             --timeout=180s
 
-          echo "Checking controller location..."
+          echo "Checking controller in default namespace..."
 
-          # If the upstream manifest does not declare a namespace,
-          # kubectl applies namespaced resources to default.
-          # Detect that case and move the controller to the intended
-          # namespace instead of failing with a misleading error.
-          if ! kubectl get deployment argo-rollouts \
-            -n "$ROLLOUTS_NAMESPACE" >/dev/null 2>&1; then
-
-            if kubectl get deployment argo-rollouts \
-              -n default >/dev/null 2>&1; then
-
-              echo "Controller found in default; recreating it in $ROLLOUTS_NAMESPACE."
-
-              kubectl delete deployment argo-rollouts \
-                -n default \
-                --ignore-not-found=true
-
-              kubectl delete service argo-rollouts-metrics \
-                -n default \
-                --ignore-not-found=true
-
-              kubectl delete serviceaccount argo-rollouts \
-                -n default \
-                --ignore-not-found=true
-
-              # Reapply the modified manifest after the incorrect
-              # default-namespace deployment has been removed.
-              kubectl apply \
-                --server-side \
-                --force-conflicts \
-                -f "$ROLLOUTS_MANIFEST"
-            fi
-          fi
-
-          echo "Waiting for controller readiness..."
+          kubectl get deployment argo-rollouts \
+            -n default
 
           kubectl rollout status deployment/argo-rollouts \
-            -n "$ROLLOUTS_NAMESPACE" \
+            -n default \
             --timeout=300s
 
-          kubectl get deployment,pods \
-            -n "$ROLLOUTS_NAMESPACE" \
-            -o wide
+          kubectl get deployments,pods \
+            -n default -o wide
 
       # --------------------------------------------------
       # APPLY ROOT ARGO CD APPLICATION
@@ -394,7 +355,8 @@ jobs:
               kubectl get rollouts,pods,services \
                 -n "$NS" -o wide || true
 
-              kubectl describe rollouts -n "$NS" || true
+              kubectl describe rollouts \
+                -n "$NS" || true
 
               exit 1
             fi
@@ -447,8 +409,7 @@ jobs:
             --timeout=300s
 
           kubectl get deployments,pods,services \
-            -n "$DASHBOARD_NAMESPACE" \
-            -o wide
+            -n "$DASHBOARD_NAMESPACE" -o wide
 
       # --------------------------------------------------
       # VERIFY PAYMENT WORKLOADS
@@ -489,7 +450,7 @@ jobs:
           echo "========================================"
 
           kubectl get deployments,pods \
-            -n "$ROLLOUTS_NAMESPACE" -o wide || true
+            -n default -o wide || true
 
           echo "========================================"
           echo "RELEASE DASHBOARD"
