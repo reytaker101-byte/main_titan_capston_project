@@ -3,35 +3,18 @@ name: 05 - Blue Green Deployment
 on:
   workflow_dispatch:
     inputs:
-      environment:
-        description: "Target environment"
-        required: true
-        type: choice
-        options:
-          - stage
-          - pilot
-          - fleet
-
       image_tag:
-        description: "Image tag"
+        description: "Image tag to deploy to Stage"
         required: true
         type: string
-
-      target_color:
-        description: "Color to deploy/activate"
-        required: true
-        type: choice
-        options:
-          - blue
-          - green
-
+        default: "v1.2.0"
       switch_traffic:
-        description: "Switch traffic to target color?"
+        description: "Promote preview to active after validation?"
         required: true
         type: choice
         options:
-          - "yes"
           - "no"
+          - "yes"
 
 permissions:
   contents: write
@@ -41,373 +24,69 @@ env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GCP_REGION: asia-southeast1
   GKE_CLUSTER: main-titan-capston-project-cluster
+  NAMESPACE: payment-stage
+  ARGO_APP: payment-service-stage
 
 jobs:
-
   blue-green:
-    name: Blue Green Deployment
+    name: Stage Blue-Green Deployment
     runs-on: ubuntu-latest
-
-    environment: ${{ inputs.environment == 'fleet' && 'production' || '' }}
-
     env:
-      TARGET_ENV: ${{ inputs.environment }}
       IMAGE_TAG: ${{ inputs.image_tag }}
-      TARGET_COLOR: ${{ inputs.target_color }}
       SWITCH_TRAFFIC: ${{ inputs.switch_traffic }}
 
     steps:
-
-      # ============================================================
-      # 1. CHECKOUT
-      # ============================================================
-
       - name: Checkout repository
         uses: actions/checkout@v4
-
-
-      # ============================================================
-      # 2. VALIDATE INPUTS
-      # ============================================================
 
       - name: Validate inputs
         shell: bash
         run: |
           set -euo pipefail
-
-          echo ""
-          echo "=================================================="
-          echo "BLUE-GREEN DEPLOYMENT INPUTS"
-          echo "=================================================="
-
-          echo "Environment    : ${TARGET_ENV}"
-          echo "Image Tag      : ${IMAGE_TAG}"
-          echo "Target Color   : ${TARGET_COLOR}"
-          echo "Switch Traffic : ${SWITCH_TRAFFIC}"
-
-          echo ""
-
-          # Validate semantic version
-          if [[ ! "${IMAGE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "ERROR: Invalid image tag: ${IMAGE_TAG}"
-            echo "Expected format: vX.Y.Z"
+          [[ "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Invalid image tag: $IMAGE_TAG"
             exit 1
-          fi
+          }
+          [[ "$SWITCH_TRAFFIC" == "yes" || "$SWITCH_TRAFFIC" == "no" ]] || exit 1
 
-          # Validate environment
-          if [[ "${TARGET_ENV}" != "stage" &&
-                "${TARGET_ENV}" != "pilot" &&
-                "${TARGET_ENV}" != "fleet" ]]; then
-
-            echo "ERROR: Invalid environment: ${TARGET_ENV}"
-            exit 1
-          fi
-
-          # Validate color
-          if [[ "${TARGET_COLOR}" != "blue" &&
-                "${TARGET_COLOR}" != "green" ]]; then
-
-            echo "ERROR: Invalid target color: ${TARGET_COLOR}"
-            exit 1
-          fi
-
-          # Validate traffic switch
-          if [[ "${SWITCH_TRAFFIC}" != "yes" &&
-                "${SWITCH_TRAFFIC}" != "no" ]]; then
-
-            echo "ERROR: switch_traffic must be yes or no"
-            exit 1
-          fi
-
-          echo ""
-          echo "Input validation passed."
-
-
-      # ============================================================
-      # 3. RESOLVE GITOPS FILES
-      # ============================================================
-
-      - name: Resolve GitOps files
+      - name: Update Stage image tag
         shell: bash
         run: |
           set -euo pipefail
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          import os, re
+          p = Path("devops-infra/kubernetes/payment-service/helm/values-stage.yaml")
+          s = p.read_text()
+          s, count = re.subn(
+              r'(?m)^(  tag:\s*).*$',
+              lambda m: m.group(1) + os.environ["IMAGE_TAG"],
+              s, count=1
+          )
+          if count != 1:
+              raise SystemExit("Could not update Stage image tag")
+          p.write_text(s)
+          PYCODE
+          grep -A3 '^image:' devops-infra/kubernetes/payment-service/helm/values-stage.yaml
 
-          case "${TARGET_ENV}" in
-
-            stage)
-
-              NAMESPACE="ai-sre-stage"
-
-              SERVICE_FILE="devops-infra/kubernetes/manifests/stage-payment-service-service.yaml"
-
-              BLUE_FILE="devops-infra/kubernetes/manifests/stage-payment-service-blue.yaml"
-
-              GREEN_FILE="devops-infra/kubernetes/manifests/stage-payment-service-green.yaml"
-
-              ;;
-
-            pilot)
-
-              NAMESPACE="ai-sre-pilot"
-
-              SERVICE_FILE="devops-infra/kubernetes/manifests/pilot-payment-service-service.yaml"
-
-              BLUE_FILE="devops-infra/kubernetes/manifests/pilot-payment-service-blue.yaml"
-
-              GREEN_FILE="devops-infra/kubernetes/manifests/pilot-payment-service-green.yaml"
-
-              ;;
-
-            fleet)
-
-              NAMESPACE="ai-sre-fleet"
-
-              SERVICE_FILE="devops-infra/kubernetes/manifests/fleet-payment-service-service.yaml"
-
-              BLUE_FILE="devops-infra/kubernetes/manifests/fleet-payment-service-blue.yaml"
-
-              GREEN_FILE="devops-infra/kubernetes/manifests/fleet-payment-service-green.yaml"
-
-              ;;
-
-          esac
-
-          echo "NAMESPACE=${NAMESPACE}" >> "$GITHUB_ENV"
-          echo "SERVICE_FILE=${SERVICE_FILE}" >> "$GITHUB_ENV"
-          echo "BLUE_FILE=${BLUE_FILE}" >> "$GITHUB_ENV"
-          echo "GREEN_FILE=${GREEN_FILE}" >> "$GITHUB_ENV"
-
-          echo ""
-          echo "=================================================="
-          echo "GITOPS CONFIGURATION"
-          echo "=================================================="
-
-          echo "Environment  : ${TARGET_ENV}"
-          echo "Namespace    : ${NAMESPACE}"
-          echo "Service File : ${SERVICE_FILE}"
-          echo "Blue File    : ${BLUE_FILE}"
-          echo "Green File   : ${GREEN_FILE}"
-
-
-      # ============================================================
-      # 4. VALIDATE GITOPS MANIFESTS
-      # ============================================================
-
-      - name: Validate GitOps manifests
+      - name: Commit and push GitOps change
         shell: bash
         run: |
           set -euo pipefail
-
-          for FILE in \
-            "${SERVICE_FILE}" \
-            "${BLUE_FILE}" \
-            "${GREEN_FILE}"
-          do
-
-            if [[ ! -f "${FILE}" ]]; then
-              echo "ERROR: Missing file: ${FILE}"
-              exit 1
-            fi
-
-            echo "Found: ${FILE}"
-
-          done
-
-          echo ""
-          echo "All required GitOps manifests exist."
-
-
-      # ============================================================
-      # 5. UPDATE IMAGE TAG
-      # ============================================================
-
-      - name: Update image tags
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          sed -i -E \
-            "s|(image: .*payment-service:).*|\1${IMAGE_TAG}|" \
-            "${BLUE_FILE}"
-
-          sed -i -E \
-            "s|(image: .*payment-service:).*|\1${IMAGE_TAG}|" \
-            "${GREEN_FILE}"
-
-          echo ""
-          echo "=================================================="
-          echo "IMAGE TAG CONFIGURATION"
-          echo "=================================================="
-
-          echo "BLUE  = ${IMAGE_TAG}"
-          echo "GREEN = ${IMAGE_TAG}"
-
-
-      # ============================================================
-      # 6. CONFIGURE BLUE/GREEN REPLICAS
-      # ============================================================
-
-      - name: Configure blue green replicas
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ "${TARGET_COLOR}" == "blue" ]]; then
-
-            # BLUE = ACTIVE
-            sed -i -E \
-              's/^([[:space:]]*replicas:)[[:space:]]*[0-9]+/\1 1/' \
-              "${BLUE_FILE}"
-
-            # GREEN = INACTIVE
-            sed -i -E \
-              's/^([[:space:]]*replicas:)[[:space:]]*[0-9]+/\1 0/' \
-              "${GREEN_FILE}"
-
-          else
-
-            # BLUE = INACTIVE
-            sed -i -E \
-              's/^([[:space:]]*replicas:)[[:space:]]*[0-9]+/\1 0/' \
-              "${BLUE_FILE}"
-
-            # GREEN = ACTIVE
-            sed -i -E \
-              's/^([[:space:]]*replicas:)[[:space:]]*[0-9]+/\1 1/' \
-              "${GREEN_FILE}"
-
-          fi
-
-          echo ""
-          echo "=================================================="
-          echo "REPLICA CONFIGURATION"
-          echo "=================================================="
-
-          echo "BLUE replicas:"
-          grep -n "replicas:" "${BLUE_FILE}"
-
-          echo ""
-
-          echo "GREEN replicas:"
-          grep -n "replicas:" "${GREEN_FILE}"
-
-
-      # ============================================================
-      # 7. CONFIGURE TRAFFIC SWITCH
-      # ============================================================
-
-      - name: Configure traffic switch
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ "${SWITCH_TRAFFIC}" == "yes" ]]; then
-
-            echo ""
-            echo "Traffic switch requested."
-            echo "Switching Service selector to: ${TARGET_COLOR}"
-
-            sed -i -E \
-              "s/(color:)[[:space:]]*(blue|green)/\1 ${TARGET_COLOR}/" \
-              "${SERVICE_FILE}"
-
-          else
-
-            echo ""
-            echo "Traffic switch NOT requested."
-            echo "Existing Service selector will remain unchanged."
-
-          fi
-
-          echo ""
-          echo "Service selector in GitOps:"
-
-          grep -A3 "selector:" "${SERVICE_FILE}"
-
-
-      # ============================================================
-      # 8. SHOW FINAL GITOPS CONFIGURATION
-      # ============================================================
-
-      - name: Show rendered GitOps configuration
-        shell: bash
-        run: |
-
-          echo ""
-          echo "=================================================="
-          echo "BLUE MANIFEST"
-          echo "=================================================="
-
-          cat "${BLUE_FILE}"
-
-          echo ""
-          echo "=================================================="
-          echo "GREEN MANIFEST"
-          echo "=================================================="
-
-          cat "${GREEN_FILE}"
-
-          echo ""
-          echo "=================================================="
-          echo "SERVICE MANIFEST"
-          echo "=================================================="
-
-          cat "${SERVICE_FILE}"
-
-
-      # ============================================================
-      # 9. COMMIT GITOPS CHANGE
-      # ============================================================
-
-      - name: Commit GitOps change
-        shell: bash
-        run: |
-          set -euo pipefail
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add \
-            "${BLUE_FILE}" \
-            "${GREEN_FILE}" \
-            "${SERVICE_FILE}"
-
-          if git diff --cached --quiet; then
-
-            echo "No GitOps changes detected."
-
-          else
-
-            git commit \
-              -m "deploy: ${TARGET_ENV} ${TARGET_COLOR} ${IMAGE_TAG}"
-
-            git push
-
+          git add devops-infra/kubernetes/payment-service/helm/values-stage.yaml
+          if ! git diff --cached --quiet; then
+            git commit -m "deploy: stage payment-service ${IMAGE_TAG}"
+            git push origin HEAD:main
           fi
-
-          GITOPS_SHA=$(git rev-parse HEAD)
-
-          echo ""
-          echo "GitOps commit SHA:"
-          echo "${GITOPS_SHA}"
-
-          echo "GITOPS_SHA=${GITOPS_SHA}" >> "$GITHUB_ENV"
-
-
-      # ============================================================
-      # 10. AUTHENTICATE TO GCP
-      # ============================================================
+          echo "GITOPS_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-
-      # ============================================================
-      # 11. GET GKE CREDENTIALS
-      # ============================================================
 
       - name: Get GKE credentials
         uses: google-github-actions/get-gke-credentials@v2
@@ -416,370 +95,98 @@ jobs:
           location: ${{ env.GCP_REGION }}
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-
-      # ============================================================
-      # 12. VERIFY GKE
-      # ============================================================
-
-      - name: Verify GKE
+      - name: Wait for Stage Argo CD application
         shell: bash
         run: |
           set -euo pipefail
+          kubectl -n argocd annotate application "$ARGO_APP" \
+            argocd.argoproj.io/refresh=hard --overwrite
 
-          echo ""
-          echo "=================================================="
-          echo "GKE CLUSTER"
-          echo "=================================================="
-
-          kubectl cluster-info
-
-          echo ""
-
-          kubectl get nodes
-
-
-      # ============================================================
-      # 13. REFRESH ARGO CD
-      # ============================================================
-
-      - name: Refresh Argo CD
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          kubectl -n argocd annotate application ai-sre-platform \
-            argocd.argoproj.io/refresh=hard \
-            --overwrite
-
-
-      # ============================================================
-      # 14. WAIT FOR ARGO CD
-      # ============================================================
-
-      - name: Wait for Argo CD GitOps revision
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo ""
-          echo "=================================================="
-          echo "WAITING FOR ARGO CD"
-          echo "=================================================="
-
-          echo "Expected GitOps revision:"
-          echo "${GITOPS_SHA}"
-
+          READY=false
           for i in {1..60}; do
-
-            SYNC_REVISION=$(kubectl get application ai-sre-platform \
-              -n argocd \
-              -o jsonpath='{.status.sync.revision}' 2>/dev/null || true)
-
-            SYNC_STATUS=$(kubectl get application ai-sre-platform \
-              -n argocd \
+            SYNC=$(kubectl -n argocd get application "$ARGO_APP" \
               -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
-
-            HEALTH_STATUS=$(kubectl get application ai-sre-platform \
-              -n argocd \
+            HEALTH=$(kubectl -n argocd get application "$ARGO_APP" \
               -o jsonpath='{.status.health.status}' 2>/dev/null || true)
+            REV=$(kubectl -n argocd get application "$ARGO_APP" \
+              -o jsonpath='{.status.sync.revision}' 2>/dev/null || true)
+            echo "Attempt $i: sync=$SYNC health=$HEALTH revision=$REV"
 
-            echo ""
-            echo "Attempt ${i}/60"
-            echo "Sync revision : ${SYNC_REVISION}"
-            echo "Sync status   : ${SYNC_STATUS}"
-            echo "Health status : ${HEALTH_STATUS}"
-
-            if [[ "${SYNC_REVISION}" == "${GITOPS_SHA}" &&
-                  "${SYNC_STATUS}" == "Synced" &&
-                  "${HEALTH_STATUS}" == "Healthy" ]]; then
-
-              echo ""
-              echo "SUCCESS: Argo CD is synced to the new GitOps commit."
-
-              exit 0
+            if [[ "$SYNC" == "Synced" && "$HEALTH" == "Healthy" && "$REV" == "$GITOPS_SHA" ]]; then
+              READY=true
+              break
             fi
-
             sleep 10
-
           done
 
-          echo ""
-          echo "ERROR: Argo CD did not reach expected GitOps revision."
-          echo "Expected: ${GITOPS_SHA}"
-
-          exit 1
-
-
-      # ============================================================
-      # 15. VERIFY TARGET DEPLOYMENT
-      # ============================================================
-
-      - name: Verify target deployment
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          TARGET_DEPLOYMENT="payment-service-${TARGET_COLOR}"
-
-          REPLICAS=$(kubectl get deployment "${TARGET_DEPLOYMENT}" \
-            -n "${NAMESPACE}" \
-            -o jsonpath='{.spec.replicas}')
-
-          IMAGE=$(kubectl get deployment "${TARGET_DEPLOYMENT}" \
-            -n "${NAMESPACE}" \
-            -o jsonpath='{.spec.template.spec.containers[0].image}')
-
-          echo ""
-          echo "=================================================="
-          echo "TARGET DEPLOYMENT"
-          echo "=================================================="
-
-          echo "Deployment        : ${TARGET_DEPLOYMENT}"
-          echo "Expected replicas : 1"
-          echo "Actual replicas   : ${REPLICAS}"
-          echo "Expected image    : ${IMAGE_TAG}"
-          echo "Actual image      : ${IMAGE}"
-
-          if [[ "${REPLICAS}" != "1" ]]; then
-
-            echo "ERROR: Target deployment does not have 1 replica."
-
+          [[ "$READY" == "true" ]] || {
+            echo "Stage Argo CD application did not reach the expected healthy revision."
             exit 1
-          fi
+          }
 
-          if [[ "${IMAGE}" != *":${IMAGE_TAG}" ]]; then
+          kubectl get rollouts -n "$NAMESPACE"
+          kubectl get services -n "$NAMESPACE"
+          kubectl get pods -n "$NAMESPACE" -o wide
 
-            echo "ERROR: Target deployment has incorrect image."
-
+      - name: Validate rollout and preview image
+        id: preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROLLOUT=$(kubectl get rollouts -n "$NAMESPACE" \
+            -o jsonpath='{.items[0].metadata.name}')
+          [[ -n "$ROLLOUT" ]] || {
+            echo "No Argo Rollout found in $NAMESPACE"
             exit 1
-          fi
+          }
+          echo "name=$ROLLOUT" >> "$GITHUB_OUTPUT"
 
-          echo ""
-          echo "Target deployment specification is correct."
-
-
-      # ============================================================
-      # 16. VERIFY INACTIVE DEPLOYMENT
-      # ============================================================
-
-      - name: Verify inactive deployment
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ "${TARGET_COLOR}" == "blue" ]]; then
-            INACTIVE_COLOR="green"
-          else
-            INACTIVE_COLOR="blue"
-          fi
-
-          INACTIVE_DEPLOYMENT="payment-service-${INACTIVE_COLOR}"
-
-          REPLICAS=$(kubectl get deployment "${INACTIVE_DEPLOYMENT}" \
-            -n "${NAMESPACE}" \
-            -o jsonpath='{.spec.replicas}')
-
-          IMAGE=$(kubectl get deployment "${INACTIVE_DEPLOYMENT}" \
-            -n "${NAMESPACE}" \
-            -o jsonpath='{.spec.template.spec.containers[0].image}')
-
-          echo ""
-          echo "=================================================="
-          echo "INACTIVE DEPLOYMENT"
-          echo "=================================================="
-
-          echo "Deployment : ${INACTIVE_DEPLOYMENT}"
-          echo "Replicas   : ${REPLICAS}"
-          echo "Image      : ${IMAGE}"
-
-          if [[ "${REPLICAS}" != "0" ]]; then
-
-            echo "ERROR: Inactive deployment must have 0 replicas."
-
+          PREVIEW_HASH=$(kubectl get rollout "$ROLLOUT" -n "$NAMESPACE" \
+            -o jsonpath='{.status.blueGreen.previewSelector}')
+          [[ -n "$PREVIEW_HASH" ]] || {
+            echo "No preview ReplicaSet selector yet; inspect rollout status."
+            kubectl describe rollout "$ROLLOUT" -n "$NAMESPACE"
             exit 1
-          fi
+          }
 
-          if [[ "${IMAGE}" != *":${IMAGE_TAG}" ]]; then
+          kubectl wait -n "$NAMESPACE" --for=condition=Ready pod \
+            -l "rollouts-pod-template-hash=$PREVIEW_HASH" --timeout=180s
 
-            echo "ERROR: Inactive deployment does not have expected image tag."
+          EXPECTED="${IMAGE_TAG}"
+          ACTUAL=$(kubectl get pods -n "$NAMESPACE" \
+            -l "rollouts-pod-template-hash=$PREVIEW_HASH" \
+            -o jsonpath='{.items[0].spec.containers[0].image}')
 
+          echo "Rollout: $ROLLOUT"
+          echo "Preview image: $ACTUAL"
+          echo "Expected tag: $EXPECTED"
+
+          [[ "$ACTUAL" == *":$EXPECTED" ]] || {
+            echo "Preview image does not match requested tag."
             exit 1
-          fi
+          }
 
-          echo ""
-          echo "Inactive deployment is correctly configured."
+          kubectl argo rollouts get rollout "$ROLLOUT" -n "$NAMESPACE" || true
 
-
-      # ============================================================
-      # 17. WAIT FOR TARGET POD
-      # ============================================================
-
-      - name: Wait for target pod readiness
+      - name: Promote preview to active
+        if: inputs.switch_traffic == 'yes'
         shell: bash
+        env:
+          ROLLOUT_NAME: ${{ steps.preview.outputs.name }}
         run: |
           set -euo pipefail
 
-          echo ""
-          echo "=================================================="
-          echo "WAITING FOR TARGET POD"
-          echo "=================================================="
+          # Install the kubectl Argo Rollouts plugin.
+          curl -fsSL -o /tmp/kubectl-argo-rollouts \
+            https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+          sudo install /tmp/kubectl-argo-rollouts /usr/local/bin/kubectl-argo-rollouts
+          chmod +x /usr/local/bin/kubectl-argo-rollouts
 
-          echo "Environment : ${TARGET_ENV}"
-          echo "Color       : ${TARGET_COLOR}"
+          kubectl argo rollouts promote "$ROLLOUT_NAME" -n "$NAMESPACE"
+          kubectl argo rollouts get rollout "$ROLLOUT_NAME" -n "$NAMESPACE" --watch
 
-          kubectl wait \
-            --namespace "${NAMESPACE}" \
-            --for=condition=ready \
-            pod \
-            -l "app=payment-service,color=${TARGET_COLOR}" \
-            --timeout=180s
-
-          echo ""
-          echo "Target pod is Ready."
-
-
-      # ============================================================
-      # 18. VERIFY PODS
-      # ============================================================
-
-      - name: Verify pods
+      - name: Final Stage status
+        if: always()
         shell: bash
         run: |
-          set -euo pipefail
-
-          echo ""
-          echo "=================================================="
-          echo "PAYMENT SERVICE PODS"
-          echo "=================================================="
-
-          kubectl get pods \
-            -n "${NAMESPACE}" \
-            -l app=payment-service \
-            -o wide
-
-
-      # ============================================================
-      # 19. VERIFY SERVICE TRAFFIC
-      # ============================================================
-
-      - name: Verify service traffic
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ACTUAL_COLOR=$(kubectl get service payment-service \
-            -n "${NAMESPACE}" \
-            -o jsonpath='{.spec.selector.color}')
-
-          echo ""
-          echo "=================================================="
-          echo "SERVICE TRAFFIC"
-          echo "=================================================="
-
-          echo "Expected color: ${TARGET_COLOR}"
-          echo "Actual color  : ${ACTUAL_COLOR}"
-
-          if [[ "${SWITCH_TRAFFIC}" == "yes" ]]; then
-
-            if [[ "${ACTUAL_COLOR}" != "${TARGET_COLOR}" ]]; then
-
-              echo "ERROR: Service is NOT pointing to target color."
-
-              exit 1
-            fi
-
-            echo ""
-            echo "Traffic successfully switched to ${TARGET_COLOR}."
-
-          else
-
-            echo ""
-            echo "Traffic switch was not requested."
-            echo "Existing Service selector remains: ${ACTUAL_COLOR}"
-
-          fi
-
-
-      # ============================================================
-      # 20. FINAL DEPLOYMENT STATUS
-      # ============================================================
-
-      - name: Final deployment status
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ "${TARGET_COLOR}" == "blue" ]]; then
-            INACTIVE_COLOR="green"
-          else
-            INACTIVE_COLOR="blue"
-          fi
-
-          ACTUAL_COLOR=$(kubectl get service payment-service \
-            -n "${NAMESPACE}" \
-            -o jsonpath='{.spec.selector.color}')
-
-          echo ""
-          echo "=================================================="
-          echo "       BLUE-GREEN DEPLOYMENT COMPLETE"
-          echo "=================================================="
-
-          echo ""
-          echo "Environment : ${TARGET_ENV^^}"
-          echo "Image       : ${IMAGE_TAG}"
-          echo "Active Color: ${ACTUAL_COLOR^^}"
-          echo "Traffic     : 100% ${ACTUAL_COLOR^^}"
-          echo "Namespace   : ${NAMESPACE}"
-          echo "GitOps SHA  : ${GITOPS_SHA}"
-
-          echo ""
-          echo "=================================================="
-          echo "ACTIVE: ${TARGET_ENV^^}-${ACTUAL_COLOR^^}"
-          echo "=================================================="
-
-          kubectl get deployment \
-            "payment-service-${ACTUAL_COLOR}" \
-            -n "${NAMESPACE}" \
-            -o wide
-
-          echo ""
-          echo "Pods:"
-
-          kubectl get pods \
-            -n "${NAMESPACE}" \
-            -l "app=payment-service,color=${ACTUAL_COLOR}" \
-            -o wide
-
-          echo ""
-          echo "=================================================="
-          echo "INACTIVE: ${TARGET_ENV^^}-${INACTIVE_COLOR^^}"
-          echo "=================================================="
-
-          kubectl get deployment \
-            "payment-service-${INACTIVE_COLOR}" \
-            -n "${NAMESPACE}" \
-            -o wide
-
-          echo ""
-          echo "Pods:"
-
-          kubectl get pods \
-            -n "${NAMESPACE}" \
-            -l "app=payment-service,color=${INACTIVE_COLOR}" \
-            -o wide \
-            || true
-
-          echo ""
-          echo "=================================================="
-          echo "FINAL SERVICE TRAFFIC"
-          echo "=================================================="
-
-          echo "Environment : ${TARGET_ENV^^}"
-          echo "Service     : payment-service"
-          echo "Active Color: ${ACTUAL_COLOR^^}"
-          echo "Traffic     : 100% ${ACTUAL_COLOR^^}"
-
-          echo ""
-          echo "=================================================="
-          echo "          ALL VALIDATIONS PASSED"
-          echo "=================================================="
+          kubectl get rollouts,services,pods -n "$NAMESPACE" -o wide || true
