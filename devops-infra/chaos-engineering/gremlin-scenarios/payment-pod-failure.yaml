@@ -1,9 +1,0 @@
-name: payment-pod-failure
-environment: sandbox
-target:
-  namespace: fashion-shop
-  app: payment-service
-expected:
-  alert: payment-availability-degraded
-  recovery: true
-  approval_required: true

@@ -1,2 +1,0 @@
-# Placeholder for cluster-level monitoring application configuration.
-# Keep Prometheus/Grafana/Alertmanager infrastructure separate from application manifests.
