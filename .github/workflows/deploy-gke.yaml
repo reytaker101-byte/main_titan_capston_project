@@ -41,9 +41,27 @@ jobs:
       - name: Install Argo CD
         run: |
           kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-          kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+          kubectl apply --server-side --force-conflicts -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+          kubectl patch svc argocd-server -n argocd --type merge -p '{"spec":{"type":"LoadBalancer"}}'
           kubectl rollout status deployment/argocd-server -n argocd --timeout=300s
 
       - name: Apply Payment Service Argo CD Application
         run: |
           kubectl apply -f deploy/argocd/argocd-payment-service-application.yaml
+
+      - name: Expose Payment Service and show IPs
+        run: |
+          kubectl patch svc payment-service-active -n payment-stage --type merge -p '{"spec":{"type":"LoadBalancer"}}' || true
+          echo "Waiting for external IPs..."
+          for i in {1..30}; do
+            ARGO_IP=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            PAYMENT_IP=$(kubectl get svc payment-service-active -n payment-stage -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            if [ -n "$ARGO_IP" ] && [ -n "$PAYMENT_IP" ]; then break; fi
+            sleep 10
+          done
+          echo "Argo CD URL: https://${ARGO_IP:-PENDING}"
+          echo "Payment Service URL: http://${PAYMENT_IP:-PENDING}"
+          kubectl get svc -n argocd argocd-server
+          kubectl get svc -n payment-stage
+          kubectl get pods -n argocd
+          kubectl get pods -n payment-stage
