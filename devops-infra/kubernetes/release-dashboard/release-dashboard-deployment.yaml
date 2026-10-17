@@ -15,6 +15,7 @@ spec:
       serviceAccountName: release-dashboard
       containers:
         - name: release-dashboard
-          image: REPLACE_WITH_RELEASE_DASHBOARD_IMAGE
+          image: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo/release-dashboard:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
