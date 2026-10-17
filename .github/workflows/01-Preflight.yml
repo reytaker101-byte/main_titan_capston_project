@@ -159,7 +159,7 @@ jobs:
 
       # --------------------------------------------------
       # INSTALL ARGO ROLLOUTS
-      # FIX: SERVER-SIDE APPLY AVOIDS CRD ANNOTATION LIMIT
+      # DOWNLOAD MANIFEST AND NORMALIZE NAMESPACES
       # --------------------------------------------------
 
       - name: Install Argo Rollouts controller
@@ -167,40 +167,63 @@ jobs:
         run: |
           set -euo pipefail
 
-          ROLLOUTS_MANIFEST="https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml"
+          ROLLOUTS_MANIFEST_URL="https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml"
+          ROLLOUTS_MANIFEST="/tmp/argo-rollouts-install.yaml"
 
-          # Apply CRDs using server-side apply.
-          # This avoids the oversized last-applied-configuration
-          # annotation that caused the previous run to fail.
+          echo "Downloading Argo Rollouts manifest..."
+          curl --fail --silent --show-error --location \
+            "$ROLLOUTS_MANIFEST_URL" \
+            --output "$ROLLOUTS_MANIFEST"
 
+          test -s "$ROLLOUTS_MANIFEST"
+
+          echo "Normalizing controller namespace to $ROLLOUTS_NAMESPACE..."
+
+          # Replace explicit default namespace declarations in the
+          # downloaded manifest. CRDs are cluster-scoped and are
+          # unaffected because they do not have metadata.namespace.
+          sed -i \
+            's/namespace: default/namespace: argo-rollouts/g' \
+            "$ROLLOUTS_MANIFEST"
+
+          # Apply the CRDs and controller resources with server-side apply.
           kubectl apply \
             --server-side \
             --force-conflicts \
             -f "$ROLLOUTS_MANIFEST"
 
-          # Ensure the controller runs in the intended namespace.
-          kubectl get deployment argo-rollouts \
-            -n "$ROLLOUTS_NAMESPACE" >/dev/null 2>&1 || {
-              echo "::error::Argo Rollouts deployment was not found in argo-rollouts namespace."
-              kubectl get deployments -A | grep argo-rollouts || true
-              exit 1
-            }
+          echo "Waiting for Argo Rollouts CRDs..."
+
+          kubectl wait \
+            --for=condition=Established \
+            crd/rollouts.argoproj.io \
+            --timeout=180s
+
+          kubectl wait \
+            --for=condition=Established \
+            crd/analysisruns.argoproj.io \
+            --timeout=180s
+
+          kubectl wait \
+            --for=condition=Established \
+            crd/analysistemplates.argoproj.io \
+            --timeout=180s
+
+          echo "Checking controller deployment..."
+
+          if ! kubectl get deployment argo-rollouts \
+            -n "$ROLLOUTS_NAMESPACE"; then
+            echo "::error::Argo Rollouts controller was not created in $ROLLOUTS_NAMESPACE."
+            kubectl get deployments -A | grep argo-rollouts || true
+            exit 1
+          fi
 
           kubectl rollout status deployment/argo-rollouts \
             -n "$ROLLOUTS_NAMESPACE" \
             --timeout=300s
 
-          kubectl wait \
-            --for=condition=Established \
-            crd/rollouts.argoproj.io \
-            --timeout=120s
-
-          kubectl wait \
-            --for=condition=Established \
-            crd/analysisruns.argoproj.io \
-            --timeout=120s
-
-          kubectl get pods -n "$ROLLOUTS_NAMESPACE" -o wide
+          kubectl get deployment,pods \
+            -n "$ROLLOUTS_NAMESPACE" -o wide
 
       # --------------------------------------------------
       # APPLY ROOT ARGO CD APPLICATION
@@ -261,6 +284,7 @@ jobs:
 
             if [[ "$FOUND" != "true" ]]; then
               echo "::error::Application $APP was not created."
+              kubectl get applications -n "$ARGOCD_NAMESPACE" || true
               exit 1
             fi
 
@@ -269,7 +293,7 @@ jobs:
           done
 
       # --------------------------------------------------
-      # SYNC PAYMENT APPLICATIONS
+      # REQUEST PAYMENT APPLICATION SYNC
       # --------------------------------------------------
 
       - name: Request Payment Service sync
@@ -290,6 +314,10 @@ jobs:
               -p '{"operation":{"sync":{}}}'
           done
 
+      # --------------------------------------------------
+      # WAIT FOR PAYMENT APPLICATION HEALTH
+      # --------------------------------------------------
+
       - name: Wait for Payment Service health
         shell: bash
         run: |
@@ -305,11 +333,11 @@ jobs:
             for i in $(seq 1 36); do
               SYNC_STATUS="$(kubectl get application "$APP" \
                 -n "$ARGOCD_NAMESPACE" \
-                -o jsonpath='{.status.sync.status}')"
+                -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
 
               HEALTH_STATUS="$(kubectl get application "$APP" \
                 -n "$ARGOCD_NAMESPACE" \
-                -o jsonpath='{.status.health.status}')"
+                -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
 
               echo "$APP: sync=$SYNC_STATUS health=$HEALTH_STATUS"
 
@@ -327,6 +355,9 @@ jobs:
 
               kubectl describe application "$APP" \
                 -n "$ARGOCD_NAMESPACE" || true
+
+              kubectl get rollouts,pods,services \
+                -n "payment-${APP##*-}" -o wide || true
 
               exit 1
             fi
@@ -347,17 +378,24 @@ jobs:
           test -f "$DIR/release-dashboard-deployment.yaml"
           test -f "$DIR/release-dashboard-service.yaml"
 
+          echo "Applying Release Dashboard RBAC..."
           kubectl apply \
             -n "$DASHBOARD_NAMESPACE" \
             -f "$DIR/release-dashboard-rbac.yaml"
 
+          echo "Applying Release Dashboard Deployment..."
           kubectl apply \
             -n "$DASHBOARD_NAMESPACE" \
             -f "$DIR/release-dashboard-deployment.yaml"
 
+          echo "Applying Release Dashboard Service..."
           kubectl apply \
             -n "$DASHBOARD_NAMESPACE" \
             -f "$DIR/release-dashboard-service.yaml"
+
+      # --------------------------------------------------
+      # VERIFY RELEASE DASHBOARD
+      # --------------------------------------------------
 
       - name: Verify Release Dashboard
         shell: bash
@@ -372,7 +410,7 @@ jobs:
             -n "$DASHBOARD_NAMESPACE" -o wide
 
       # --------------------------------------------------
-      # VERIFY PAYMENT ROLLOUTS
+      # VERIFY PAYMENT WORKLOADS
       # --------------------------------------------------
 
       - name: Verify Payment Service workloads
@@ -406,7 +444,7 @@ jobs:
             -n "$ARGOCD_NAMESPACE" -o wide || true
 
           echo "========================================"
-          echo "ARGO ROLLOUTS"
+          echo "ARGO ROLLOUTS CONTROLLER"
           echo "========================================"
 
           kubectl get deployments,pods \
