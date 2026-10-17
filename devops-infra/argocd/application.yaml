@@ -82,20 +82,28 @@ spec:
     - list:
         elements:
           - environment: dev
+            appName: payment-service-dev
             namespace: payment-dev
             valuesFile: values-dev.yaml
 
           - environment: stage
+            appName: payment-service-stage
             namespace: payment-stage
             valuesFile: values-stage.yaml
 
-          - environment: prod
+          - environment: pilot
+            appName: payment-service-pilot
+            namespace: payment-pilot
+            valuesFile: values-pilot.yaml
+
+          - environment: fleet
+            appName: payment-service-prod
             namespace: payment-prod
             valuesFile: values-prod.yaml
 
   template:
     metadata:
-      name: 'payment-service-{{environment}}'
+      name: '{{appName}}'
 
     spec:
       project: default

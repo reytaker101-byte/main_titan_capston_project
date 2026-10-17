@@ -1,0 +1,29 @@
+replicaCount: 2
+image:
+  repository: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo/dev/payment-service
+  tag: v1.2.0
+  pullPolicy: Always
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+rollout:
+  enabled: true
+  autoPromotionEnabled: false
+  scaleDownDelaySeconds: 30
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  path: /metrics
+ingress:
+  enabled: false
+  className: nginx
+  host: payment-service.example.com
+env: []

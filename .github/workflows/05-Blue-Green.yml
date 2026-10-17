@@ -3,8 +3,16 @@ name: 05 - Blue Green Deployment
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - stage
+          - pilot
+          - fleet
       image_tag:
-        description: "Image tag to deploy to Stage"
+        description: "Image tag, e.g. v1.2.0"
         required: true
         type: string
         default: "v1.2.0"
@@ -24,22 +32,23 @@ env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GCP_REGION: asia-southeast1
   GKE_CLUSTER: main-titan-capston-project-cluster
-  NAMESPACE: payment-stage
-  ARGO_APP: payment-service-stage
 
 jobs:
   blue-green:
-    name: Stage Blue-Green Deployment
+    name: Blue-Green Deployment
     runs-on: ubuntu-latest
     env:
+      TARGET_ENV: ${{ inputs.environment }}
       IMAGE_TAG: ${{ inputs.image_tag }}
       SWITCH_TRAFFIC: ${{ inputs.switch_traffic }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
-      - name: Validate inputs
+      - name: Configure environment
         shell: bash
         run: |
           set -euo pipefail
@@ -47,27 +56,49 @@ jobs:
             echo "Invalid image tag: $IMAGE_TAG"
             exit 1
           }
-          [[ "$SWITCH_TRAFFIC" == "yes" || "$SWITCH_TRAFFIC" == "no" ]] || exit 1
 
-      - name: Update Stage image tag
+          case "$TARGET_ENV" in
+            stage)
+              echo "NAMESPACE=payment-stage" >> "$GITHUB_ENV"
+              echo "ARGO_APP=payment-service-stage" >> "$GITHUB_ENV"
+              echo "VALUES_FILE=devops-infra/kubernetes/payment-service/helm/values-stage.yaml" >> "$GITHUB_ENV"
+              ;;
+            pilot)
+              echo "NAMESPACE=payment-pilot" >> "$GITHUB_ENV"
+              echo "ARGO_APP=payment-service-pilot" >> "$GITHUB_ENV"
+              echo "VALUES_FILE=devops-infra/kubernetes/payment-service/helm/values-pilot.yaml" >> "$GITHUB_ENV"
+              ;;
+            fleet)
+              echo "NAMESPACE=payment-prod" >> "$GITHUB_ENV"
+              echo "ARGO_APP=payment-service-prod" >> "$GITHUB_ENV"
+              echo "VALUES_FILE=devops-infra/kubernetes/payment-service/helm/values-prod.yaml" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "Unsupported environment: $TARGET_ENV"
+              exit 1
+              ;;
+          esac
+
+      - name: Update selected environment image tag
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PYCODE'
+          python3 - <<'PY'
           from pathlib import Path
           import os, re
-          p = Path("devops-infra/kubernetes/payment-service/helm/values-stage.yaml")
-          s = p.read_text()
-          s, count = re.subn(
+          p = Path(os.environ["VALUES_FILE"])
+          text = p.read_text()
+          text, count = re.subn(
               r'(?m)^(  tag:\s*).*$',
               lambda m: m.group(1) + os.environ["IMAGE_TAG"],
-              s, count=1
+              text,
+              count=1
           )
           if count != 1:
-              raise SystemExit("Could not update Stage image tag")
-          p.write_text(s)
-          PYCODE
-          grep -A3 '^image:' devops-infra/kubernetes/payment-service/helm/values-stage.yaml
+              raise SystemExit(f"Could not update image tag in {p}")
+          p.write_text(text)
+          print(f"Updated {p} to {os.environ['IMAGE_TAG']}")
+          PY
 
       - name: Commit and push GitOps change
         shell: bash
@@ -75,9 +106,11 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add devops-infra/kubernetes/payment-service/helm/values-stage.yaml
-          if ! git diff --cached --quiet; then
-            git commit -m "deploy: stage payment-service ${IMAGE_TAG}"
+          git add "$VALUES_FILE"
+          if git diff --cached --quiet; then
+            echo "Image tag is already set; no GitOps commit required."
+          else
+            git commit -m "deploy: ${TARGET_ENV} payment-service ${IMAGE_TAG}"
             git push origin HEAD:main
           fi
           echo "GITOPS_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
@@ -95,7 +128,7 @@ jobs:
           location: ${{ env.GCP_REGION }}
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Wait for Stage Argo CD application
+      - name: Wait for Argo CD sync
         shell: bash
         run: |
           set -euo pipefail
@@ -120,15 +153,12 @@ jobs:
           done
 
           [[ "$READY" == "true" ]] || {
-            echo "Stage Argo CD application did not reach the expected healthy revision."
+            echo "Argo CD did not sync to the expected Git revision."
+            kubectl -n argocd describe application "$ARGO_APP" || true
             exit 1
           }
 
-          kubectl get rollouts -n "$NAMESPACE"
-          kubectl get services -n "$NAMESPACE"
-          kubectl get pods -n "$NAMESPACE" -o wide
-
-      - name: Validate rollout and preview image
+      - name: Validate rollout preview
         id: preview
         shell: bash
         run: |
@@ -141,10 +171,16 @@ jobs:
           }
           echo "name=$ROLLOUT" >> "$GITHUB_OUTPUT"
 
-          PREVIEW_HASH=$(kubectl get rollout "$ROLLOUT" -n "$NAMESPACE" \
-            -o jsonpath='{.status.blueGreen.previewSelector}')
+          PREVIEW_HASH=""
+          for i in {1..18}; do
+            PREVIEW_HASH=$(kubectl get rollout "$ROLLOUT" -n "$NAMESPACE" \
+              -o jsonpath='{.status.blueGreen.previewSelector}' 2>/dev/null || true)
+            [[ -n "$PREVIEW_HASH" ]] && break
+            sleep 10
+          done
+
           [[ -n "$PREVIEW_HASH" ]] || {
-            echo "No preview ReplicaSet selector yet; inspect rollout status."
+            echo "Preview ReplicaSet not available."
             kubectl describe rollout "$ROLLOUT" -n "$NAMESPACE"
             exit 1
           }
@@ -152,21 +188,16 @@ jobs:
           kubectl wait -n "$NAMESPACE" --for=condition=Ready pod \
             -l "rollouts-pod-template-hash=$PREVIEW_HASH" --timeout=180s
 
-          EXPECTED="${IMAGE_TAG}"
           ACTUAL=$(kubectl get pods -n "$NAMESPACE" \
             -l "rollouts-pod-template-hash=$PREVIEW_HASH" \
             -o jsonpath='{.items[0].spec.containers[0].image}')
 
           echo "Rollout: $ROLLOUT"
           echo "Preview image: $ACTUAL"
-          echo "Expected tag: $EXPECTED"
-
-          [[ "$ACTUAL" == *":$EXPECTED" ]] || {
-            echo "Preview image does not match requested tag."
+          [[ "$ACTUAL" == *":$IMAGE_TAG" ]] || {
+            echo "Preview image does not match $IMAGE_TAG"
             exit 1
           }
-
-          kubectl argo rollouts get rollout "$ROLLOUT" -n "$NAMESPACE" || true
 
       - name: Promote preview to active
         if: inputs.switch_traffic == 'yes'
@@ -175,8 +206,6 @@ jobs:
           ROLLOUT_NAME: ${{ steps.preview.outputs.name }}
         run: |
           set -euo pipefail
-
-          # Install the kubectl Argo Rollouts plugin.
           curl -fsSL -o /tmp/kubectl-argo-rollouts \
             https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
           sudo install /tmp/kubectl-argo-rollouts /usr/local/bin/kubectl-argo-rollouts
@@ -185,7 +214,7 @@ jobs:
           kubectl argo rollouts promote "$ROLLOUT_NAME" -n "$NAMESPACE"
           kubectl argo rollouts get rollout "$ROLLOUT_NAME" -n "$NAMESPACE" --watch
 
-      - name: Final Stage status
+      - name: Final status
         if: always()
         shell: bash
         run: |
