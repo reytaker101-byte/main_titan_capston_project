@@ -14,20 +14,28 @@ env:
 
 jobs:
   preflight:
-    name: Bootstrap Argo CD and Verify GKE
+    name: Bootstrap Argo CD, Deploy and Verify
     runs-on: ubuntu-latest
 
     steps:
-
+      # --------------------------------------------------
+      # 1. Checkout repository
+      # --------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # --------------------------------------------------
+      # 2. Authenticate to Google Cloud
+      # --------------------------------------------------
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
+      # --------------------------------------------------
+      # 3. Connect to GKE
+      # --------------------------------------------------
       - name: Get GKE credentials
         uses: google-github-actions/get-gke-credentials@v2
         with:
@@ -35,82 +43,262 @@ jobs:
           location: ${{ env.GCP_REGION }}
           project_id: ${{ env.GCP_PROJECT_ID }}
 
+      # --------------------------------------------------
+      # 4. Verify cluster
+      # --------------------------------------------------
       - name: Verify cluster
         run: |
+          set -e
           kubectl cluster-info
           kubectl get nodes
 
+      # --------------------------------------------------
+      # 5. Create namespaces
+      # --------------------------------------------------
       - name: Create required namespaces
         run: |
-          for NS in argocd ai-sre-dev ai-sre-stage ai-sre-pilot ai-sre-fleet release-dashboard; do
-            kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+          set -e
+
+          for NS in \
+            argocd \
+            ai-sre-dev \
+            ai-sre-stage \
+            ai-sre-pilot \
+            ai-sre-fleet \
+            release-dashboard \
+            payment-dev \
+            payment-stage \
+            payment-prod
+          do
+            kubectl create namespace "$NS" \
+              --dry-run=client \
+              -o yaml | kubectl apply -f -
           done
 
+      # --------------------------------------------------
+      # 6. Install or reconcile Argo CD
+      # --------------------------------------------------
       - name: Install or reconcile Argo CD
         run: |
+          set -e
+
           kubectl apply \
             -n argocd \
             -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.1.9/manifests/install.yaml
 
+      # --------------------------------------------------
+      # 7. Wait for Argo CD
+      # --------------------------------------------------
       - name: Wait for Argo CD
         run: |
+          set -e
+
           kubectl wait \
             -n argocd \
             --for=condition=Available \
             deployment/argocd-server \
             --timeout=300s
 
+          kubectl rollout status \
+            -n argocd \
+            deployment/argocd-applicationset-controller \
+            --timeout=300s
+
+          kubectl rollout status \
+            -n argocd \
+            deployment/argocd-repo-server \
+            --timeout=300s
+
+      # --------------------------------------------------
+      # 8. Register root GitOps application
+      # --------------------------------------------------
       - name: Register GitOps Application
         run: |
+          set -e
+
           kubectl apply \
             -f devops-infra/argocd/application.yaml
 
+      # --------------------------------------------------
+      # 9. Expose Argo CD
+      # --------------------------------------------------
       - name: Expose Argo CD
         run: |
+          set -e
+
           kubectl apply \
             -f devops-infra/argocd/argocd-server-service.yaml
 
-      - name: Show Argo CD status and IP
+      # --------------------------------------------------
+      # 10. Apply Payment Service ApplicationSet
+      # --------------------------------------------------
+      - name: Apply Payment Service ApplicationSet
         run: |
-          echo "=========================================="
-          echo "ARGO CD PODS"
-          echo "=========================================="
+          set -e
 
-          kubectl get pods -n argocd -o wide
+          kubectl apply \
+            -f devops-infra/kubernetes/argocd/payment-service-applicationset.yaml
 
-          echo ""
-          echo "=========================================="
-          echo "ARGO CD SERVICE"
-          echo "=========================================="
+      # --------------------------------------------------
+      # 11. Wait for generated Applications
+      # --------------------------------------------------
+      - name: Wait for Payment Service Applications
+        run: |
+          set -e
 
-          kubectl get svc argocd-server -n argocd
+          for APP in \
+            payment-service-dev \
+            payment-service-stage \
+            payment-service-prod
+          do
+            echo "Waiting for $APP..."
 
-          echo ""
-          echo "=========================================="
-          echo "ARGO CD EXTERNAL IP"
-          echo "=========================================="
+            for i in {1..30}; do
+              if kubectl get application "$APP" -n argocd \
+                >/dev/null 2>&1; then
+                break
+              fi
 
-          for i in {1..30}; do
+              sleep 10
+            done
 
-            IP=$(kubectl get svc argocd-server \
-              -n argocd \
-              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' \
-              2>/dev/null || true)
-
-            if [ -n "$IP" ]; then
-              echo "Argo CD URL: https://$IP"
-              break
-            fi
-
-            echo "Waiting for LoadBalancer IP..."
-            sleep 10
-
+            kubectl get application "$APP" -n argocd
           done
 
-      - name: Show application status
+      # --------------------------------------------------
+      # 12. Request Argo CD synchronization
+      # --------------------------------------------------
+      - name: Request Payment Service Sync
+        run: |
+          set -e
+
+          for APP in \
+            payment-service-dev \
+            payment-service-stage \
+            payment-service-prod
+          do
+            echo "Requesting sync for $APP"
+
+            kubectl patch application "$APP" \
+              -n argocd \
+              --type merge \
+              -p '{"operation":{"initiatedBy":{"username":"github-actions"},"sync":{"revision":"main"}}}'
+          done
+
+      # --------------------------------------------------
+      # 13. Apply Release Dashboard manifests
+      # --------------------------------------------------
+      - name: Deploy Release Dashboard
+        run: |
+          set -e
+
+          kubectl apply \
+            -f devops-infra/kubernetes/release-dashboard/release-dashboard-rbac.yaml
+
+          kubectl apply \
+            -f devops-infra/kubernetes/release-dashboard/release-dashboard-deployment.yaml
+
+          kubectl apply \
+            -f devops-infra/kubernetes/release-dashboard/release-dashboard-service.yaml
+
+      # --------------------------------------------------
+      # 14. Wait for Release Dashboard
+      # --------------------------------------------------
+      - name: Wait for Release Dashboard
+        run: |
+          set -e
+
+          kubectl rollout status \
+            deployment/release-dashboard \
+            -n release-dashboard \
+            --timeout=300s
+
+      # --------------------------------------------------
+      # 15. Verify Payment Service rollouts
+      # --------------------------------------------------
+      - name: Verify Payment Service Deployments
+        run: |
+          set -e
+
+          for NS in payment-dev payment-stage payment-prod; do
+            echo "=========================================="
+            echo "Checking deployments in $NS"
+            echo "=========================================="
+
+            kubectl get deployments -n "$NS"
+            kubectl get pods -n "$NS" -o wide
+          done
+
+      # --------------------------------------------------
+      # 16. Verify Release Dashboard
+      # --------------------------------------------------
+      - name: Verify Release Dashboard
+        run: |
+          set -e
+
+          kubectl get deployment release-dashboard \
+            -n release-dashboard
+
+          kubectl get pods \
+            -n release-dashboard \
+            -o wide
+
+          kubectl get svc \
+            -n release-dashboard
+
+      # --------------------------------------------------
+      # 17. Show Argo CD applications
+      # --------------------------------------------------
+      - name: Show Argo CD Application Status
+        if: always()
         run: |
           echo "=========================================="
-          echo "ARGO CD APPLICATION"
+          echo "ARGO CD APPLICATIONS"
           echo "=========================================="
 
-          kubectl get applications.argoproj.io -n argocd
+          kubectl get applications.argoproj.io \
+            -n argocd \
+            -o wide || true
+
+          echo ""
+          echo "=========================================="
+          echo "APPLICATIONSET"
+          echo "=========================================="
+
+          kubectl get applicationsets.argoproj.io \
+            -n argocd || true
+
+      # --------------------------------------------------
+      # 18. Final pod report
+      # --------------------------------------------------
+      - name: Final Pod Report
+        if: always()
+        run: |
+          for NS in \
+            argocd \
+            payment-dev \
+            payment-stage \
+            payment-prod \
+            release-dashboard
+          do
+            echo ""
+            echo "=========================================="
+            echo "PODS IN NAMESPACE: $NS"
+            echo "=========================================="
+
+            kubectl get pods -n "$NS" -o wide || true
+          done
+
+      # --------------------------------------------------
+      # 19. Print Argo CD service information
+      # --------------------------------------------------
+      - name: Show Argo CD Service
+        if: always()
+        run: |
+          kubectl get svc argocd-server \
+            -n argocd || true
+
+          kubectl get svc argocd-server \
+            -n argocd \
+            -o jsonpath='Argo CD External IP: {.status.loadBalancer.ingress[0].ip}{"\n"}' \
+            || true
