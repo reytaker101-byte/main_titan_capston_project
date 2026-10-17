@@ -1,21 +1,53 @@
 apiVersion: apps/v1
 kind: Deployment
+
 metadata:
   name: release-dashboard
+  namespace: release-dashboard
+
 spec:
   replicas: 1
+
   selector:
     matchLabels:
       app: release-dashboard
+
   template:
     metadata:
       labels:
         app: release-dashboard
+
     spec:
       serviceAccountName: release-dashboard
+
       containers:
         - name: release-dashboard
-          image: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo/release-dashboard:latest
+
+          image: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo/release-dashboard:v1.2.0
+
           imagePullPolicy: Always
+
           ports:
-            - containerPort: 8080
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
