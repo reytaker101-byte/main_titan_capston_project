@@ -26,8 +26,10 @@ spec:
     automated:
       prune: true
       selfHeal: true
+
     syncOptions:
       - CreateNamespace=true
+
     retry:
       limit: 5
       backoff:
@@ -67,6 +69,7 @@ spec:
 # ============================================================
 # 3. PAYMENT SERVICE APPLICATIONSET
 # Creates dev, stage and prod Applications
+# Each environment uses its own complete values file.
 # ============================================================
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -104,7 +107,6 @@ spec:
 
         helm:
           valueFiles:
-            - values.yaml
             - '{{valuesFile}}'
 
       destination:
