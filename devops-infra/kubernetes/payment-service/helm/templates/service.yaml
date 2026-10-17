@@ -1,29 +1,63 @@
 apiVersion: v1
+
 kind: Service
+
 metadata:
+
   name: {{ include "payment-service.fullname" . }}-active
+
   labels:
+
     app: {{ include "payment-service.name" . }}
+
 spec:
+
   type: {{ .Values.service.type }}
+
   selector:
+
     app: {{ include "payment-service.name" . }}
+
+    rollouts-pod-template-hash: {{ `{{ . }}` }}
+
   ports:
+
     - name: http
+
       port: {{ .Values.service.port }}
+
       targetPort: {{ .Values.service.targetPort }}
+
 ---
+
 apiVersion: v1
+
 kind: Service
+
 metadata:
+
   name: {{ include "payment-service.fullname" . }}-preview
+
   labels:
+
     app: {{ include "payment-service.name" . }}
+
 spec:
+
   type: {{ .Values.service.type }}
+
   selector:
+
     app: {{ include "payment-service.name" . }}
+
+    rollouts-pod-template-hash: {{ `{{ . }}` }}
+
   ports:
+
     - name: http
+
       port: {{ .Values.service.port }}
+
       targetPort: {{ .Values.service.targetPort }}
+
+EOF
