@@ -2,6 +2,12 @@ name: Bootstrap Argo CD and Deploy Payment Service
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "deploy/**"
+      - ".github/workflows/deploy-gke.yaml"
 
 permissions:
   contents: read
