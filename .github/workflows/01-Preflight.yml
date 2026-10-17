@@ -25,53 +25,58 @@ env:
   GKE_CLUSTER: main-titan-capston-project-cluster
   ARGOCD_NAMESPACE: argocd
   DASHBOARD_NAMESPACE: release-dashboard
-  IMAGE_TAG: v1.2.0
-  GAR_REGION: asia-southeast1
-  GAR_REPOSITORY: main-titan-capston-project-artifactory-repo
 
 jobs:
   deploy:
     name: Bootstrap Argo CD, Deploy and Verify
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     steps:
+      # --------------------------------------------------
+      # CHECKOUT
+      # --------------------------------------------------
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
       # --------------------------------------------------
-      # GOOGLE CLOUD AUTHENTICATION
+      # VALIDATE GOOGLE CLOUD SECRETS
       # --------------------------------------------------
 
       - name: Validate required configuration
         shell: bash
         env:
-          WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          WIF_PROVIDER: ${{ secrets.GCP_WIF_PROVIDER }}
           GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
         run: |
           set -euo pipefail
 
-          [[ -n "${GCP_PROJECT_ID:-}" ]] || {
+          if [[ -z "${GCP_PROJECT_ID:-}" ]]; then
             echo "::error::GCP_PROJECT_ID secret is missing."
             exit 1
-          }
+          fi
 
-          [[ -n "${WIF_PROVIDER:-}" ]] || {
-            echo "::error::GCP_WORKLOAD_IDENTITY_PROVIDER secret is missing."
+          if [[ -z "${WIF_PROVIDER:-}" ]]; then
+            echo "::error::GCP_WIF_PROVIDER secret is missing."
             exit 1
-          }
+          fi
 
-          [[ -n "${GCP_SERVICE_ACCOUNT:-}" ]] || {
+          if [[ -z "${GCP_SERVICE_ACCOUNT:-}" ]]; then
             echo "::error::GCP_SERVICE_ACCOUNT secret is missing."
             exit 1
-          }
+          fi
 
-          echo "Required GitHub configuration is present."
+          echo "Required configuration is present."
+
+      # --------------------------------------------------
+      # GOOGLE CLOUD AUTHENTICATION
+      # --------------------------------------------------
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
           create_credentials_file: true
           export_environment_variables: true
@@ -79,10 +84,11 @@ jobs:
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Verify Google Cloud identity
+      - name: Verify Google Cloud authentication
         shell: bash
         run: |
           set -euo pipefail
+
           gcloud config set project "$GCP_PROJECT_ID"
           gcloud auth list
           gcloud config get-value project
@@ -102,6 +108,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           kubectl cluster-info
           kubectl get nodes
           kubectl get namespaces
@@ -110,7 +117,7 @@ jobs:
       # INSTALL ARGO CD
       # --------------------------------------------------
 
-      - name: Install or upgrade Argo CD
+      - name: Install Argo CD
         shell: bash
         run: |
           set -euo pipefail
@@ -118,17 +125,21 @@ jobs:
           kubectl create namespace "$ARGOCD_NAMESPACE" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-          kubectl apply -n "$ARGOCD_NAMESPACE" \
+          kubectl apply \
+            -n "$ARGOCD_NAMESPACE" \
             -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.1.9/manifests/install.yaml
 
           kubectl rollout status deployment/argocd-server \
-            -n "$ARGOCD_NAMESPACE" --timeout=300s
+            -n "$ARGOCD_NAMESPACE" \
+            --timeout=300s
 
           kubectl rollout status deployment/argocd-repo-server \
-            -n "$ARGOCD_NAMESPACE" --timeout=300s
+            -n "$ARGOCD_NAMESPACE" \
+            --timeout=300s
 
           kubectl rollout status deployment/argocd-applicationset-controller \
-            -n "$ARGOCD_NAMESPACE" --timeout=300s
+            -n "$ARGOCD_NAMESPACE" \
+            --timeout=300s
 
       # --------------------------------------------------
       # INSTALL ARGO ROLLOUTS
@@ -143,10 +154,11 @@ jobs:
             https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
 
           kubectl rollout status deployment/argo-rollouts \
-            -n argo-rollouts --timeout=300s
+            -n argo-rollouts \
+            --timeout=300s
 
       # --------------------------------------------------
-      # CREATE NAMESPACES
+      # CREATE APPLICATION NAMESPACES
       # --------------------------------------------------
 
       - name: Create application namespaces
@@ -175,37 +187,61 @@ jobs:
 
           test -f devops-infra/argocd/application.yaml
 
-          kubectl apply -f devops-infra/argocd/application.yaml
+          kubectl apply \
+            -f devops-infra/argocd/application.yaml
 
-      - name: Wait for Payment Service ApplicationSet
+      # --------------------------------------------------
+      # APPLY PAYMENT SERVICE APPLICATIONSET
+      # --------------------------------------------------
+
+      - name: Apply Payment Service ApplicationSet
         shell: bash
         run: |
           set -euo pipefail
 
-          kubectl apply -f \
+          test -f \
             devops-infra/kubernetes/argocd/payment-service-applicationset.yaml
 
-          for i in $(seq 1 30); do
-            if kubectl get application payment-service-dev \
-              -n "$ARGOCD_NAMESPACE" >/dev/null 2>&1; then
-              break
+          kubectl apply \
+            -f devops-infra/kubernetes/argocd/payment-service-applicationset.yaml
+
+      - name: Wait for Payment Service applications
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APPS=(
+            payment-service-dev
+            payment-service-stage
+            payment-service-prod
+          )
+
+          for APP in "${APPS[@]}"; do
+            echo "Waiting for $APP"
+
+            FOUND=false
+
+            for i in $(seq 1 30); do
+              if kubectl get application "$APP" \
+                -n "$ARGOCD_NAMESPACE" >/dev/null 2>&1; then
+                FOUND=true
+                break
+              fi
+
+              sleep 10
+            done
+
+            if [[ "$FOUND" != "true" ]]; then
+              echo "::error::Application $APP was not created."
+              exit 1
             fi
 
-            echo "Waiting for ApplicationSet to create applications ($i/30)"
-            sleep 10
-          done
-
-          for APP in \
-            payment-service-dev \
-            payment-service-stage \
-            payment-service-prod
-          do
             kubectl get application "$APP" \
               -n "$ARGOCD_NAMESPACE"
           done
 
       # --------------------------------------------------
-      # SYNC PAYMENT SERVICE APPLICATIONS
+      # REQUEST ARGO CD SYNC
       # --------------------------------------------------
 
       - name: Sync Payment Service applications
@@ -218,34 +254,57 @@ jobs:
             payment-service-stage \
             payment-service-prod
           do
-            echo "Syncing $APP"
+            echo "Requesting sync for $APP"
 
             kubectl patch application "$APP" \
               -n "$ARGOCD_NAMESPACE" \
               --type merge \
               -p '{"operation":{"sync":{}}}'
 
-            for i in $(seq 1 30); do
-              STATUS="$(kubectl get application "$APP" \
+          done
+
+      - name: Wait for Payment Service applications to sync
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for APP in \
+            payment-service-dev \
+            payment-service-stage \
+            payment-service-prod
+          do
+            READY=false
+
+            for i in $(seq 1 36); do
+              SYNC_STATUS="$(kubectl get application "$APP" \
                 -n "$ARGOCD_NAMESPACE" \
-                -o jsonpath='{.status.sync.status}' 2>/dev/null || true)"
+                -o jsonpath='{.status.sync.status}')"
 
-              HEALTH="$(kubectl get application "$APP" \
+              HEALTH_STATUS="$(kubectl get application "$APP" \
                 -n "$ARGOCD_NAMESPACE" \
-                -o jsonpath='{.status.health.status}' 2>/dev/null || true)"
+                -o jsonpath='{.status.health.status}')"
 
-              echo "$APP: sync=$STATUS health=$HEALTH"
+              echo "$APP: sync=$SYNC_STATUS health=$HEALTH_STATUS"
 
-              if [[ "$STATUS" == "Synced" && "$HEALTH" == "Healthy" ]]; then
+              if [[ "$SYNC_STATUS" == "Synced" && \
+                    "$HEALTH_STATUS" == "Healthy" ]]; then
+                READY=true
                 break
               fi
 
               sleep 10
             done
+
+            if [[ "$READY" != "true" ]]; then
+              echo "::error::$APP did not reach Synced and Healthy."
+              kubectl describe application "$APP" \
+                -n "$ARGOCD_NAMESPACE" || true
+              exit 1
+            fi
           done
 
       # --------------------------------------------------
-      # RELEASE DASHBOARD RBAC AND DEPLOYMENT
+      # RELEASE DASHBOARD RESOURCES
       # --------------------------------------------------
 
       - name: Apply Release Dashboard resources
@@ -253,24 +312,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -f devops-infra/kubernetes/release-dashboard/release-dashboard-rbac.yaml
-          test -f devops-infra/kubernetes/release-dashboard/release-dashboard-deployment.yaml
-          test -f devops-infra/kubernetes/release-dashboard/release-dashboard-service.yaml
+          DASHBOARD_DIR="devops-infra/kubernetes/release-dashboard"
 
-          kubectl apply -f \
-            devops-infra/kubernetes/release-dashboard/release-dashboard-rbac.yaml \
+          test -f "$DASHBOARD_DIR/release-dashboard-rbac.yaml"
+          test -f "$DASHBOARD_DIR/release-dashboard-deployment.yaml"
+          test -f "$DASHBOARD_DIR/release-dashboard-service.yaml"
+
+          kubectl apply \
+            -f "$DASHBOARD_DIR/release-dashboard-rbac.yaml" \
             -n "$DASHBOARD_NAMESPACE"
 
-          kubectl apply -f \
-            devops-infra/kubernetes/release-dashboard/release-dashboard-deployment.yaml \
+          kubectl apply \
+            -f "$DASHBOARD_DIR/release-dashboard-deployment.yaml" \
             -n "$DASHBOARD_NAMESPACE"
 
-          kubectl apply -f \
-            devops-infra/kubernetes/release-dashboard/release-dashboard-service.yaml \
+          kubectl apply \
+            -f "$DASHBOARD_DIR/release-dashboard-service.yaml" \
             -n "$DASHBOARD_NAMESPACE"
 
       # --------------------------------------------------
-      # VERIFY DEPLOYMENTS
+      # VERIFY RELEASE DASHBOARD
       # --------------------------------------------------
 
       - name: Verify Release Dashboard
@@ -279,10 +340,16 @@ jobs:
           set -euo pipefail
 
           kubectl rollout status deployment/release-dashboard \
-            -n "$DASHBOARD_NAMESPACE" --timeout=300s
+            -n "$DASHBOARD_NAMESPACE" \
+            --timeout=300s
 
-          kubectl get deployment,pods,services \
-            -n "$DASHBOARD_NAMESPACE" -o wide
+          kubectl get deployments,pods,services \
+            -n "$DASHBOARD_NAMESPACE" \
+            -o wide
+
+      # --------------------------------------------------
+      # VERIFY PAYMENT SERVICE
+      # --------------------------------------------------
 
       - name: Verify Payment Service workloads
         shell: bash
@@ -291,7 +358,7 @@ jobs:
 
           for NS in payment-dev payment-stage payment-prod; do
             echo "========================================"
-            echo "Namespace: $NS"
+            echo "NAMESPACE: $NS"
             echo "========================================"
 
             kubectl get rollouts -n "$NS" -o wide
@@ -299,7 +366,11 @@ jobs:
             kubectl get services -n "$NS" -o wide
           done
 
-      - name: Argo CD status
+      # --------------------------------------------------
+      # FINAL STATUS REPORT
+      # --------------------------------------------------
+
+      - name: Final deployment status
         if: always()
         shell: bash
         run: |
@@ -311,10 +382,11 @@ jobs:
             -n "$ARGOCD_NAMESPACE" -o wide || true
 
           echo "========================================"
-          echo "ARGO ROLLOUTS"
+          echo "ARGO ROLLOUTS CONTROLLER"
           echo "========================================"
 
-          kubectl get pods -n argo-rollouts -o wide || true
+          kubectl get pods \
+            -n argo-rollouts -o wide || true
 
           echo "========================================"
           echo "RELEASE DASHBOARD"
@@ -323,11 +395,11 @@ jobs:
           kubectl get deployments,pods,services \
             -n "$DASHBOARD_NAMESPACE" -o wide || true
 
-          echo "========================================"
-          echo "PAYMENT SERVICE"
-          echo "========================================"
-
           for NS in payment-dev payment-stage payment-prod; do
+            echo "========================================"
+            echo "PAYMENT SERVICE: $NS"
+            echo "========================================"
+
             kubectl get rollouts,pods,services \
               -n "$NS" -o wide || true
           done
