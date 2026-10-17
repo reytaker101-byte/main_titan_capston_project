@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "DEV image tag"
+        description: "Payment Service image tag produced by Build & Push"
         required: true
         type: string
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
-
   deploy:
     name: Update DEV GitOps
     runs-on: ubuntu-latest
@@ -21,33 +21,112 @@ jobs:
       IMAGE_TAG: ${{ inputs.image_tag }}
 
     steps:
-
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v4
+        with:
+          ref: main
 
+      # ------------------------------------------
+      # Validate the supplied image tag
+      # ------------------------------------------
+      - name: Validate image tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_TAG="$(printf '%s' "$IMAGE_TAG" | xargs)"
+
+          if [[ ! "$IMAGE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid image tag. Expected v<major>.<minor>.<patch>"
+            exit 1
+          fi
+
+          echo "Validated image tag: $IMAGE_TAG"
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+
+      # ------------------------------------------
+      # Update DEV Helm values
+      # ------------------------------------------
       - name: Update DEV payment-service image
+        shell: bash
         run: |
+          set -euo pipefail
 
-          sed -i \
-            "s/__IMAGE_TAG__/${IMAGE_TAG}/g" \
-            devops-infra/kubernetes/manifests/dev-payment-service.yaml
+          VALUES_FILE="devops-infra/kubernetes/payment-service/helm/values-dev.yaml"
 
-      - name: Update release dashboard image
-        run: |
+          if [[ ! -f "$VALUES_FILE" ]]; then
+            echo "::error::DEV Helm values file not found: $VALUES_FILE"
+            exit 1
+          fi
 
-          sed -i \
-            "s/__IMAGE_TAG__/${IMAGE_TAG}/g" \
-            devops-infra/kubernetes/manifests/release-dashboard-deployment.yaml
+          IMAGE_TAG="$IMAGE_TAG" python3 - "$VALUES_FILE" <<'PY'
+          import os
+          import re
+          import sys
 
+          path = sys.argv[1]
+          tag = os.environ["IMAGE_TAG"]
+
+          with open(path, encoding="utf-8") as f:
+              content = f.read()
+
+          pattern = r"(?ms)(^image:\s*\n(?:(?!^\S).*\n)*?^[ \t]+tag:\s*).*$"
+
+          updated, count = re.subn(
+              pattern,
+              lambda match: match.group(1) + tag,
+              content,
+              count=1,
+          )
+
+          if count != 1:
+              raise SystemExit(
+                  "Could not uniquely locate image.tag in DEV Helm values."
+              )
+
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(updated)
+
+          print(f"DEV image tag updated to {tag}")
+          PY
+
+          echo "Updated DEV image configuration:"
+          grep -A 3 '^image:' "$VALUES_FILE"
+
+      # ------------------------------------------
+      # Commit only the DEV GitOps change
+      # ------------------------------------------
       - name: Commit GitOps change
+        shell: bash
         run: |
+          set -euo pipefail
 
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add devops-infra/kubernetes/manifests/
+          git add \
+            devops-infra/kubernetes/payment-service/helm/values-dev.yaml
 
-          git diff --cached --quiet || \
-            git commit -m "deploy: DEV ${IMAGE_TAG}"
+          if git diff --cached --quiet; then
+            echo "No changes required. DEV already uses ${IMAGE_TAG}."
+            exit 0
+          fi
 
-          git push
+          git commit -m "deploy: Payment Service DEV ${IMAGE_TAG}"
+          git push origin HEAD:main
+
+      # ------------------------------------------
+      # Summary
+      # ------------------------------------------
+      - name: Deployment summary
+        shell: bash
+        run: |
+          {
+            echo "## DEV GitOps Update"
+            echo ""
+            echo "- Image tag: ${IMAGE_TAG}"
+            echo "- Environment: DEV"
+            echo "- Values file: devops-infra/kubernetes/payment-service/helm/values-dev.yaml"
+            echo "- Argo CD will reconcile the Git change."
+          } >> "$GITHUB_STEP_SUMMARY"
