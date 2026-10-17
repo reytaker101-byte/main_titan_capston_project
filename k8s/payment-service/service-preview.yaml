@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service-preview
+  namespace: payment-stage
+spec:
+  type: ClusterIP
+  selector:
+    app: payment-service
+    color: green
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8004

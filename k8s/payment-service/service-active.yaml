@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service-active
+  namespace: payment-stage
+spec:
+  type: ClusterIP
+  selector:
+    app: payment-service
+    color: blue
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8004
