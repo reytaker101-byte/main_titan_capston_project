@@ -2,7 +2,7 @@ replicaCount: 2
 
 image:
   repository: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo/dev/payment-service
-  tag: latest
+  tag: v1.2.0
   pullPolicy: Always
 
 service:
