@@ -49,19 +49,36 @@ jobs:
         run: |
           kubectl apply -f deploy/argocd/argocd-payment-service-application.yaml
 
-      - name: Expose Payment Service and show IPs
+      - name: Wait for Payment Service and show IPs
         run: |
-          kubectl patch svc payment-service-active -n payment-stage --type merge -p '{"spec":{"type":"LoadBalancer"}}' || true
+          echo "Waiting for payment-stage namespace..."
+          kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/payment-stage --timeout=180s
+
+          echo "Waiting for Argo CD to create Payment Services..."
+          for i in {1..36}; do
+            if kubectl get svc payment-service-active -n payment-stage >/dev/null 2>&1; then
+              break
+            fi
+            sleep 5
+          done
+
+          kubectl get svc payment-service-active -n payment-stage
+          kubectl patch svc payment-service-active -n payment-stage --type merge -p '{"spec":{"type":"LoadBalancer"}}'
+
           echo "Waiting for external IPs..."
-          for i in {1..30}; do
+          for i in {1..36}; do
             ARGO_IP=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            PAYMENT_IP=$(kubectl get svc payment-service-active -n payment-stage -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            PAYMENT_IP=$(kubectl get svc payment-service-active -n payment-stage -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
             if [ -n "$ARGO_IP" ] && [ -n "$PAYMENT_IP" ]; then break; fi
             sleep 10
           done
-          echo "Argo CD URL: https://${ARGO_IP:-PENDING}"
-          echo "Payment Service URL: http://${PAYMENT_IP:-PENDING}"
-          kubectl get svc -n argocd argocd-server
+
+          echo "===== ACCESS URLS ====="
+          echo "Argo CD: https://${ARGO_IP:-PENDING}"
+          echo "Payment Service: http://${PAYMENT_IP:-PENDING}"
+          echo "===== ARGO CD SERVICE ====="
+          kubectl get svc argocd-server -n argocd
+          echo "===== PAYMENT SERVICES ====="
           kubectl get svc -n payment-stage
-          kubectl get pods -n argocd
+          echo "===== PAYMENT PODS ====="
           kubectl get pods -n payment-stage
