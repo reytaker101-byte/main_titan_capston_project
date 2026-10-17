@@ -8,9 +8,12 @@ spec:
   source:
     repoURL: https://github.com/reytaker101-byte/main_titan_capston_project.git
     targetRevision: main
-    path: devops-infra/kubernetes/manifests
+    path: devops-infra/kubernetes/argocd
+    directory:
+      recurse: true
   destination:
     server: https://kubernetes.default.svc
+    namespace: argocd
   syncPolicy:
     automated:
       prune: true
