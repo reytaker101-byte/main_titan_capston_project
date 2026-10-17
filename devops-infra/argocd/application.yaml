@@ -31,3 +31,23 @@ spec:
         duration: 5s
         factor: 2
         maxDuration: 3m
+
+---
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: argocd-server
+  namespace: argocd
+
+spec:
+  type: LoadBalancer
+
+  selector:
+    app.kubernetes.io/name: argocd-server
+
+  ports:
+    - name: https
+      port: 443
+      targetPort: 8080
+      protocol: TCP
