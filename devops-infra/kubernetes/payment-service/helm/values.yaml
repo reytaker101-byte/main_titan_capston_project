@@ -1,9 +1,9 @@
 replicaCount: 2
 
 image:
-  repository: REPLACE_WITH_ECR_REPOSITORY
+  repository: asia-southeast1-docker.pkg.dev/project-361c9ab3-160b-49e3-915/main-titan-capston-project-artifactory-repo/dev/payment-service
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 service:
   type: ClusterIP
