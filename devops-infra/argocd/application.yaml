@@ -1,9 +1,9 @@
 # ============================================================
 # 1. ROOT ARGO CD APPLICATION
+# Manages Argo CD resources from this directory
 # ============================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
-
 metadata:
   name: ai-sre-platform
   namespace: argocd
@@ -15,7 +15,6 @@ spec:
     repoURL: https://github.com/reytaker101-byte/main_titan_capston_project.git
     targetRevision: main
     path: devops-infra/argocd
-
     directory:
       recurse: false
 
@@ -27,7 +26,8 @@ spec:
     automated:
       prune: true
       selfHeal: true
-
+    syncOptions:
+      - CreateNamespace=true
     retry:
       limit: 5
       backoff:
@@ -38,10 +38,10 @@ spec:
 ---
 # ============================================================
 # 2. ARGO CD SERVER SERVICE
+# Exposes Argo CD through a cloud LoadBalancer
 # ============================================================
 apiVersion: v1
 kind: Service
-
 metadata:
   name: argocd-server
   namespace: argocd
@@ -66,11 +66,10 @@ spec:
 ---
 # ============================================================
 # 3. PAYMENT SERVICE APPLICATIONSET
-# Generates dev, stage and prod applications
+# Creates dev, stage and prod Applications
 # ============================================================
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
-
 metadata:
   name: payment-service
   namespace: argocd
@@ -93,7 +92,7 @@ spec:
 
   template:
     metadata:
-      name: payment-service-{{environment}}
+      name: 'payment-service-{{environment}}'
 
     spec:
       project: default
@@ -133,7 +132,6 @@ spec:
 # ============================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
-
 metadata:
   name: release-dashboard
   namespace: argocd
