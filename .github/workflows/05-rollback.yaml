@@ -1,4 +1,4 @@
-name: 08 - Blue Green Rollback
+name: 05 - Blue Green Rollback
 
 on:
   workflow_dispatch:

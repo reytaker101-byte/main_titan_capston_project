@@ -1,0 +1,32 @@
+name: 04 - Promote Image Across Environments
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Immutable image tag already built and pushed
+        required: true
+        type: string
+      target_environment:
+        description: Environment to promote the image into
+        required: true
+        type: choice
+        options:
+          - stage-pilot
+          - stage-fleet
+          - prod-pilot
+          - prod-fleet
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  promote:
+    name: Promote to selected environment
+    uses: ./.github/workflows/deploy-blue-green.yaml
+    with:
+      image_tag: ${{ inputs.image_tag }}
+      namespace: ${{ inputs.target_environment == 'stage-pilot' && 'payment-stage-pilot' || inputs.target_environment == 'stage-fleet' && 'payment-stage-fleet' || inputs.target_environment == 'prod-pilot' && 'payment-prod-pilot' || 'payment-prod-fleet' }}
+      replicas: ${{ startsWith(inputs.target_environment, 'prod-') && 2 || 1 }}
+    secrets: inherit
