@@ -1,4 +1,4 @@
-name: Bootstrap Argo CD and Deploy Payment Service
+name: 02-Bootstrap Argo CD and Deploy Payment Service
 
 on:
   workflow_dispatch:
