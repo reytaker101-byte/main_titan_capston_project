@@ -14,7 +14,7 @@ on:
       - main
     paths:
       - "services/payment-service/**"
-      - ".github/workflows/build-push.yml"
+      - ".github/workflows/build-push.yaml"
 
 env:
   GCP_PROJECT_ID: project-361c9ab3-160b-49e3-915

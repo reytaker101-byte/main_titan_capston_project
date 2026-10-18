@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: payment-service-stage-fleet
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/reytaker101-byte/main_titan_capston_project.git
+    targetRevision: main
+    path: deploy/environments/stage-fleet
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: payment-stage-fleet
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: payment-service-blue
+      jsonPointers:
+        - /spec/replicas
+        - /spec/template/spec/containers/0/image
+    - group: apps
+      kind: Deployment
+      name: payment-service-green
+      jsonPointers:
+        - /spec/replicas
+        - /spec/template/spec/containers/0/image
+    - group: ""
+      kind: Service
+      name: payment-service-active
+      jsonPointers:
+        - /spec/selector
+    - group: ""
+      kind: Service
+      name: payment-service-preview
+      jsonPointers:
+        - /spec/selector
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - RespectIgnoreDifferences=true
+      - CreateNamespace=true

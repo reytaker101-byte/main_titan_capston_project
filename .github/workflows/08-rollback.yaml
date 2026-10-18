@@ -1,0 +1,91 @@
+name: 08 - Blue Green Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to roll back
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage-pilot
+          - stage-fleet
+          - prod-pilot
+          - prod-fleet
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      GCP_PROJECT_ID: project-361c9ab3-160b-49e3-915
+      GKE_CLUSTER: main-titan-capston-project-cluster
+      GKE_ZONE: asia-southeast1-a
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Install Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Connect to GKE
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_ZONE }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Restore previous color
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$ENVIRONMENT" in
+            dev)         NS=payment-dev;          REPLICAS=1 ;;
+            stage-pilot) NS=payment-stage-pilot;  REPLICAS=1 ;;
+            stage-fleet) NS=payment-stage-fleet;  REPLICAS=1 ;;
+            prod-pilot)  NS=payment-prod-pilot;   REPLICAS=2 ;;
+            prod-fleet)  NS=payment-prod-fleet;   REPLICAS=2 ;;
+            *) echo "Invalid environment"; exit 1 ;;
+          esac
+
+          CURRENT="$(kubectl get service payment-service-active \
+            -n "$NS" -o jsonpath='{.spec.selector.color}')"
+
+          if [[ "$CURRENT" == "blue" ]]; then
+            PREVIOUS=green
+          elif [[ "$CURRENT" == "green" ]]; then
+            PREVIOUS=blue
+          else
+            echo "Cannot determine active color; aborting."
+            exit 1
+          fi
+
+          DEPLOYMENT="payment-service-${PREVIOUS}"
+
+          kubectl get deployment "$DEPLOYMENT" -n "$NS" >/dev/null
+
+          kubectl scale "deployment/payment-service-${PREVIOUS}" \
+            -n "$NS" --replicas="$REPLICAS"
+
+          kubectl rollout status "deployment/${DEPLOYMENT}" \
+            -n "$NS" --timeout=300s
+
+          kubectl patch service payment-service-active \
+            -n "$NS" --type merge \
+            -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${PREVIOUS}\"}}}"
+
+          echo "Keeping the previous deployment available for fast rollback."
+
+          echo "Rollback completed: ${NS} now serves ${PREVIOUS}."
+          kubectl get deployments,services -n "$NS"

@@ -1,0 +1,215 @@
+name: Reusable Blue Green Deployment
+
+on:
+  workflow_call:
+    inputs:
+      namespace:
+        required: true
+        type: string
+      replicas:
+        required: true
+        type: number
+      image_tag:
+        required: true
+        type: string
+    secrets:
+      GCP_WIF_PROVIDER:
+        required: true
+      GCP_SERVICE_ACCOUNT:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: project-361c9ab3-160b-49e3-915
+  GKE_CLUSTER: main-titan-capston-project-cluster
+  GKE_ZONE: asia-southeast1-a
+  GCP_REGION: asia-southeast1
+  GAR_REPOSITORY: main-titan-capston-project-artifactory-repo
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate image tag
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          if [[ ! "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid image tag"
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Install Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Connect to GKE
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_ZONE }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Deploy, verify and switch traffic
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+          REPLICAS: ${{ inputs.replicas }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/payment-service:${IMAGE_TAG}"
+
+          kubectl create namespace "$NAMESPACE" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          CURRENT_COLOR="$(kubectl get service payment-service-active \
+            -n "$NAMESPACE" \
+            -o jsonpath='{.spec.selector.color}' 2>/dev/null || true)"
+
+          if [[ "$CURRENT_COLOR" == "blue" ]]; then
+            TARGET_COLOR="green"
+          else
+            TARGET_COLOR="blue"
+          fi
+
+          echo "Environment: $NAMESPACE"
+          echo "Current active color: ${CURRENT_COLOR:-none}"
+          echo "Deploying image: $IMAGE"
+          echo "Target color: $TARGET_COLOR"
+
+          cat <<MANIFEST | kubectl apply -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: payment-service-${TARGET_COLOR}
+            namespace: ${NAMESPACE}
+            labels:
+              app: payment-service
+              color: ${TARGET_COLOR}
+          spec:
+            replicas: ${REPLICAS}
+            selector:
+              matchLabels:
+                app: payment-service
+                color: ${TARGET_COLOR}
+            template:
+              metadata:
+                labels:
+                  app: payment-service
+                  color: ${TARGET_COLOR}
+              spec:
+                containers:
+                  - name: payment-service
+                    image: ${IMAGE}
+                    imagePullPolicy: Always
+                    ports:
+                      - name: http
+                        containerPort: 8004
+                    env:
+                      - name: APP_VERSION
+                        value: "${IMAGE_TAG}"
+                    resources:
+                      requests:
+                        cpu: 100m
+                        memory: 128Mi
+                      limits:
+                        cpu: 500m
+                        memory: 256Mi
+                    readinessProbe:
+                      httpGet:
+                        path: /health
+                        port: 8004
+                      initialDelaySeconds: 3
+                      periodSeconds: 5
+                    livenessProbe:
+                      httpGet:
+                        path: /health
+                        port: 8004
+                      initialDelaySeconds: 10
+                      periodSeconds: 10
+          MANIFEST
+
+          kubectl rollout status \
+            "deployment/payment-service-${TARGET_COLOR}" \
+            -n "$NAMESPACE" --timeout=300s
+
+          kubectl get pods -n "$NAMESPACE" \
+            -l "app=payment-service,color=${TARGET_COLOR}"
+
+          # Point preview service at the candidate deployment.
+          if kubectl get service payment-service-preview -n "$NAMESPACE" >/dev/null 2>&1; then
+            kubectl patch service payment-service-preview -n "$NAMESPACE" \
+              --type merge \
+              -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${TARGET_COLOR}\"}}}"
+          else
+            cat <<PREVIEW | kubectl apply -f -
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: payment-service-preview
+            namespace: ${NAMESPACE}
+          spec:
+            type: ClusterIP
+            selector:
+              app: payment-service
+              color: ${TARGET_COLOR}
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8004
+          PREVIEW
+          fi
+
+          echo "Testing candidate through preview Service..."
+          kubectl run "preview-smoke-${GITHUB_RUN_ID}" \
+            --namespace "$NAMESPACE" \
+            --image=curlimages/curl:8.10.1 \
+            --restart=Never --rm -i --quiet \
+            --command -- sh -c \
+            "curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 2 --max-time 10 http://payment-service-preview.${NAMESPACE}.svc.cluster.local/health"
+
+          echo "Preview health check passed."
+
+          if [[ -z "$CURRENT_COLOR" ]]; then
+            echo "Initial deployment: candidate is ready."
+            cat <<MANIFEST | kubectl apply -f -
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: payment-service-active
+            namespace: ${NAMESPACE}
+          spec:
+            type: ClusterIP
+            selector:
+              app: payment-service
+              color: ${TARGET_COLOR}
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8004
+          MANIFEST
+          else
+            kubectl patch service payment-service-active \
+              -n "$NAMESPACE" --type merge \
+              -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${TARGET_COLOR}\"}}}"
+          fi
+
+          echo "Traffic switched to ${TARGET_COLOR}."
+
+          if [[ -z "$CURRENT_COLOR" ]]; then
+            echo "Initial deployment completed."
+          else
+            echo "Previous color retained for rollback."
+          fi
+
+          kubectl get deployments,services -n "$NAMESPACE"
