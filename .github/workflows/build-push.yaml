@@ -1,4 +1,4 @@
-name: Build and Push Payment Service
+name: 01-Build and Push Payment Service
 
 on:
   workflow_dispatch:
