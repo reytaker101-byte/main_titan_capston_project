@@ -1,6 +1,49 @@
 name: Reusable Blue Green Deployment
 
 on:
+  workflow_dispatch:
+    inputs:
+      namespace:
+        description: "Target namespace"
+        required: true
+        type: choice
+        options:
+          - payment-dev
+          - payment-stage-pilot
+          - payment-stage-fleet
+          - payment-prod-pilot
+          - payment-prod-fleet
+      replicas:
+        description: "Number of replicas"
+        required: true
+        type: choice
+        options:
+          - "1"
+          - "2"
+      image_tag:
+        description: "Image tag (not used for rollback)"
+        required: true
+        type: string
+        default: unused
+      target_color:
+        description: "Target color; choose blue or green for rollback"
+        required: true
+        type: choice
+        options:
+          - blue
+          - green
+          - auto
+        default: auto
+      mode:
+        description: "Deployment action"
+        required: true
+        type: choice
+        options:
+          - rollback
+          - activate
+          - deploy-only
+        default: rollback
+
   workflow_call:
     inputs:
       namespace:
@@ -12,6 +55,14 @@ on:
       image_tag:
         required: true
         type: string
+      target_color:
+        required: false
+        type: string
+        default: auto
+      mode:
+        required: false
+        type: string
+        default: activate
     secrets:
       GCP_WIF_PROVIDER:
         required: true
@@ -33,14 +84,28 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Validate image tag
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate inputs
         env:
           IMAGE_TAG: ${{ inputs.image_tag }}
+          NAMESPACE: ${{ inputs.namespace }}
+          TARGET_COLOR: ${{ inputs.target_color }}
+          MODE: ${{ inputs.mode }}
+          REPLICAS: ${{ inputs.replicas }}
+        shell: bash
         run: |
-          if [[ ! "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
-            echo "Invalid image tag"
+          set -euo pipefail
+          [[ "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]] || { echo "Invalid image tag"; exit 1; }
+          [[ "$NAMESPACE" =~ ^payment-(dev|stage-pilot|stage-fleet|prod-pilot|prod-fleet)$ ]] || { echo "Invalid namespace"; exit 1; }
+          [[ "$TARGET_COLOR" == auto || "$TARGET_COLOR" == blue || "$TARGET_COLOR" == green ]] || { echo "target_color must be auto, blue or green"; exit 1; }
+          [[ "$MODE" == deploy-only || "$MODE" == activate || "$MODE" == rollback ]] || { echo "mode must be deploy-only, activate or rollback"; exit 1; }
+          if [[ "$MODE" == rollback && "$TARGET_COLOR" == auto ]]; then
+            echo "Rollback requires an explicit target_color: blue or green."
             exit 1
           fi
+          [[ "$REPLICAS" =~ ^[1-9][0-9]*$ ]] || { echo "replicas must be positive"; exit 1; }
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -58,158 +123,189 @@ jobs:
           location: ${{ env.GKE_ZONE }}
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Deploy, verify and switch traffic
+      - name: Deploy candidate, test it, and optionally activate
         env:
           NAMESPACE: ${{ inputs.namespace }}
           REPLICAS: ${{ inputs.replicas }}
           IMAGE_TAG: ${{ inputs.image_tag }}
+          REQUESTED_COLOR: ${{ inputs.target_color }}
+          MODE: ${{ inputs.mode }}
         shell: bash
         run: |
           set -euo pipefail
 
+          case "$NAMESPACE" in
+            payment-dev) ENV_DIR=dev ;;
+            payment-stage-pilot) ENV_DIR=stage-pilot ;;
+            payment-stage-fleet) ENV_DIR=stage-fleet ;;
+            payment-prod-pilot) ENV_DIR=prod-pilot ;;
+            payment-prod-fleet) ENV_DIR=prod-fleet ;;
+            *) echo "Unsupported namespace: $NAMESPACE"; exit 1 ;;
+          esac
+
+          # Create only missing resources. Never overwrite existing resources here.
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+          for resource in \
+            payment-service-blue-deployment.yaml \
+            payment-service-green-deployment.yaml \
+            payment-service-active-service.yaml \
+            payment-service-preview-service.yaml; do
+            manifest="deploy/environments/${ENV_DIR}/${resource}"
+            kind="$(kubectl create --dry-run=client -f "$manifest" -o jsonpath='{.kind}')"
+            name="$(kubectl create --dry-run=client -f "$manifest" -o jsonpath='{.metadata.name}')"
+
+            if ! kubectl get "$kind" "$name" -n "$NAMESPACE" >/dev/null 2>&1; then
+              kubectl create -f "$manifest"
+            fi
+          done
+
+          ACTIVE_COLOR="$(kubectl get service payment-service-active -n "$NAMESPACE" -o jsonpath='{.spec.selector.color}')"
+          [[ "$ACTIVE_COLOR" == blue || "$ACTIVE_COLOR" == green ]] || {
+            echo "Active Service has an invalid color selector: $ACTIVE_COLOR"
+            exit 1
+          }
+
+          if [[ "$ACTIVE_COLOR" == blue ]]; then INACTIVE_COLOR=green; else INACTIVE_COLOR=blue; fi
+
+          if [[ "$REQUESTED_COLOR" == auto ]]; then
+            TARGET_COLOR="$INACTIVE_COLOR"
+          else
+            TARGET_COLOR="$REQUESTED_COLOR"
+          fi
+
+          if [[ "$TARGET_COLOR" == "$ACTIVE_COLOR" ]]; then
+            echo "Refusing to deploy over the currently active color."
+            echo "Active=$ACTIVE_COLOR; requested=$TARGET_COLOR"
+            exit 1
+          fi
+
+          if [[ "$MODE" == rollback ]]; then
+            echo "Rollback mode: preserve the selected deployment's existing image."
+
+            kubectl get deployment "payment-service-${TARGET_COLOR}" -n "$NAMESPACE" >/dev/null
+
+            kubectl scale "deployment/payment-service-${TARGET_COLOR}" \
+              --replicas="$REPLICAS" -n "$NAMESPACE"
+
+            kubectl rollout status "deployment/payment-service-${TARGET_COLOR}" \
+              -n "$NAMESPACE" --timeout=300s
+
+            kubectl patch service payment-service-preview -n "$NAMESPACE" \
+              --type=merge \
+              -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${TARGET_COLOR}\"}}}"
+
+            kubectl port-forward -n "$NAMESPACE" \
+              service/payment-service-preview 18006:80 >/tmp/payment-rollback-port-forward.log 2>&1 &
+            PF_PID=$!
+            trap 'kill "$PF_PID" 2>/dev/null || true' EXIT
+
+            HEALTH_OK=false
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent http://127.0.0.1:18006/health >/dev/null 2>&1; then
+                HEALTH_OK=true
+                break
+              fi
+              sleep 2
+            done
+
+            if [[ "$HEALTH_OK" != true ]]; then
+              echo "Rollback target health check failed. Active traffic was not switched."
+              echo "Restoring Preview Service to the previously active color: $ACTIVE_COLOR"
+              kubectl patch service payment-service-preview -n "$NAMESPACE" \
+                --type=merge \
+                -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${ACTIVE_COLOR}\"}}}" \
+                || echo "WARNING: Preview Service restoration failed; inspect it manually."
+              cat /tmp/payment-rollback-port-forward.log || true
+              exit 1
+            fi
+
+            kubectl patch service payment-service-active -n "$NAMESPACE" \
+              --type=merge \
+              -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${TARGET_COLOR}\"}}}"
+
+            kubectl patch service payment-service-preview -n "$NAMESPACE" \
+              --type=merge \
+              -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${ACTIVE_COLOR}\"}}}"
+
+            echo "Rollback complete: active color is now $TARGET_COLOR."
+            kubectl get services payment-service-active payment-service-preview -n "$NAMESPACE"
+            exit 0
+          fi
+
           IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/payment-service:${IMAGE_TAG}"
 
-          kubectl create namespace "$NAMESPACE" \
-            --dry-run=client -o yaml | kubectl apply -f -
+          echo "Namespace: $NAMESPACE"
+          echo "Active color: $ACTIVE_COLOR"
+          echo "Candidate color: $TARGET_COLOR"
+          echo "Image: $IMAGE"
+          echo "Mode: $MODE"
 
-          CURRENT_COLOR="$(kubectl get service payment-service-active \
-            -n "$NAMESPACE" \
-            -o jsonpath='{.spec.selector.color}' 2>/dev/null || true)"
+          kubectl get deployment "payment-service-${TARGET_COLOR}" -n "$NAMESPACE" >/dev/null
 
-          if [[ "$CURRENT_COLOR" == "blue" ]]; then
-            TARGET_COLOR="green"
-          else
-            TARGET_COLOR="blue"
-          fi
+          kubectl set image "deployment/payment-service-${TARGET_COLOR}" \
+            "payment-service=${IMAGE}" -n "$NAMESPACE"
 
-          echo "Environment: $NAMESPACE"
-          echo "Current active color: ${CURRENT_COLOR:-none}"
-          echo "Deploying image: $IMAGE"
-          echo "Target color: $TARGET_COLOR"
+          kubectl set env "deployment/payment-service-${TARGET_COLOR}" \
+            "APP_VERSION=${IMAGE_TAG}" -n "$NAMESPACE"
 
-          cat <<MANIFEST | kubectl apply -f -
-          apiVersion: apps/v1
-          kind: Deployment
-          metadata:
-            name: payment-service-${TARGET_COLOR}
-            namespace: ${NAMESPACE}
-            labels:
-              app: payment-service
-              color: ${TARGET_COLOR}
-          spec:
-            replicas: ${REPLICAS}
-            selector:
-              matchLabels:
-                app: payment-service
-                color: ${TARGET_COLOR}
-            template:
-              metadata:
-                labels:
-                  app: payment-service
-                  color: ${TARGET_COLOR}
-              spec:
-                containers:
-                  - name: payment-service
-                    image: ${IMAGE}
-                    imagePullPolicy: Always
-                    ports:
-                      - name: http
-                        containerPort: 8004
-                    env:
-                      - name: APP_VERSION
-                        value: "${IMAGE_TAG}"
-                    resources:
-                      requests:
-                        cpu: 100m
-                        memory: 128Mi
-                      limits:
-                        cpu: 500m
-                        memory: 256Mi
-                    readinessProbe:
-                      httpGet:
-                        path: /health
-                        port: 8004
-                      initialDelaySeconds: 3
-                      periodSeconds: 5
-                    livenessProbe:
-                      httpGet:
-                        path: /health
-                        port: 8004
-                      initialDelaySeconds: 10
-                      periodSeconds: 10
-          MANIFEST
+          kubectl scale "deployment/payment-service-${TARGET_COLOR}" \
+            --replicas="$REPLICAS" -n "$NAMESPACE"
 
-          kubectl rollout status \
-            "deployment/payment-service-${TARGET_COLOR}" \
+          kubectl rollout status "deployment/payment-service-${TARGET_COLOR}" \
             -n "$NAMESPACE" --timeout=300s
 
-          kubectl get pods -n "$NAMESPACE" \
-            -l "app=payment-service,color=${TARGET_COLOR}"
+          # Point Preview at the candidate so it can be tested independently.
+          kubectl patch service payment-service-preview -n "$NAMESPACE" \
+            --type=merge \
+            -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${TARGET_COLOR}\"}}}"
 
-          # Point preview service at the candidate deployment.
-          if kubectl get service payment-service-preview -n "$NAMESPACE" >/dev/null 2>&1; then
+          kubectl rollout status "deployment/payment-service-${TARGET_COLOR}" \
+            -n "$NAMESPACE" --timeout=120s
+
+          # Verify the application's real /health endpoint through Preview.
+          kubectl port-forward -n "$NAMESPACE" \
+            service/payment-service-preview 18004:80 >/tmp/payment-service-port-forward.log 2>&1 &
+          PF_PID=$!
+          trap 'kill "$PF_PID" 2>/dev/null || true' EXIT
+
+          HEALTH_OK=false
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:18004/health >/dev/null 2>&1; then
+              HEALTH_OK=true
+              break
+            fi
+            sleep 2
+          done
+
+          if [[ "$HEALTH_OK" != true ]]; then
+            echo "Candidate health check failed. Active Service was not changed."
+            echo "Restoring Preview Service to the previously active color: $ACTIVE_COLOR"
             kubectl patch service payment-service-preview -n "$NAMESPACE" \
-              --type merge \
-              -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${TARGET_COLOR}\"}}}"
-          else
-            cat <<PREVIEW | kubectl apply -f -
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: payment-service-preview
-            namespace: ${NAMESPACE}
-          spec:
-            type: ClusterIP
-            selector:
-              app: payment-service
-              color: ${TARGET_COLOR}
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8004
-          PREVIEW
+              --type=merge \
+              -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${ACTIVE_COLOR}\"}}}" \
+              || echo "WARNING: Preview Service restoration failed; inspect it manually."
+            cat /tmp/payment-service-port-forward.log || true
+            exit 1
           fi
 
-          echo "Testing candidate through preview Service..."
-          kubectl run "preview-smoke-${GITHUB_RUN_ID}" \
-            --namespace "$NAMESPACE" \
-            --image=curlimages/curl:8.10.1 \
-            --restart=Never --rm -i --quiet \
-            --command -- sh -c \
-            "curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 2 --max-time 10 http://payment-service-preview.${NAMESPACE}.svc.cluster.local/health"
+          echo "Candidate health check passed."
 
-          echo "Preview health check passed."
-
-          if [[ -z "$CURRENT_COLOR" ]]; then
-            echo "Initial deployment: candidate is ready."
-            cat <<MANIFEST | kubectl apply -f -
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: payment-service-active
-            namespace: ${NAMESPACE}
-          spec:
-            type: ClusterIP
-            selector:
-              app: payment-service
-              color: ${TARGET_COLOR}
-            ports:
-              - name: http
-                port: 80
-                targetPort: 8004
-          MANIFEST
-          else
-            kubectl patch service payment-service-active \
-              -n "$NAMESPACE" --type merge \
-              -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${TARGET_COLOR}\"}}}"
+          if [[ "$MODE" == deploy-only ]]; then
+            echo "Deploy-only complete. Active Service remains on $ACTIVE_COLOR."
+            exit 0
           fi
 
-          echo "Traffic switched to ${TARGET_COLOR}."
+          # Switch traffic only after candidate rollout and health check pass.
+          kubectl patch service payment-service-active -n "$NAMESPACE" \
+            --type=merge \
+            -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${TARGET_COLOR}\"}}}"
 
-          if [[ -z "$CURRENT_COLOR" ]]; then
-            echo "Initial deployment completed."
-          else
-            echo "Previous color retained for rollback."
-          fi
+          # Preview now points to the previous color for inspection/rollback.
+          kubectl patch service payment-service-preview -n "$NAMESPACE" \
+            --type=merge \
+            -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${ACTIVE_COLOR}\"}}}"
 
-          kubectl get deployments,services -n "$NAMESPACE"
+          echo "Activation complete."
+          kubectl get services payment-service-active payment-service-preview -n "$NAMESPACE"
+          kubectl get deployments -n "$NAMESPACE"
