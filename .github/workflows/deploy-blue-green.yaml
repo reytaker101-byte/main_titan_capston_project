@@ -1,4 +1,4 @@
-name: Reusable Blue Green Deployment
+name: 05-Reusable Blue Green Deployment
 
 on:
   workflow_dispatch:
