@@ -1,6 +1,6 @@
 # WORKFLOW 05: REUSABLE BLUE-GREEN DEPLOYMENT
 # Deploy an image to the candidate color, test it, and optionally switch traffic.
-name: Reusable Blue Green Deployment
+name: 05-Reusable Blue Green Deployment
 
 # Supports manual execution and calls from other GitHub Actions workflows.
 on:
