@@ -1,18 +1,42 @@
+# WORKFLOW 03: DEPLOY TO DEVELOPMENT
+# Purpose:
+# Deploy a previously built Payment Service image to the Dev environment.
+# This workflow does not build the Docker image; it calls the reusable
+# Blue-Green deployment workflow to perform the deployment.
 name: 03 - Deploy Dev
 
+# TRIGGER:
+# workflow_dispatch lets a developer start this deployment manually
+# from GitHub Actions when they want to deploy a specific image tag.
 on:
   workflow_dispatch:
     inputs:
+      # INPUT — IMAGE TAG:
+      # Specify the exact Docker image tag that already exists in Artifact Registry.
+      # The called workflow uses this tag to identify which version to deploy.
       image_tag:
         description: Existing image tag in Artifact Registry
         required: true
         type: string
 
+# JOB:
+# This job calls another workflow instead of defining deployment steps here.
+# GitHub runs the reusable workflow and passes the inputs and secrets below.
 jobs:
   deploy:
+    # REUSABLE WORKFLOW:
+    # Call the shared Blue-Green deployment logic stored in this repository.
+    # This keeps deployment behaviour consistent across environments.
     uses: ./.github/workflows/deploy-blue-green.yaml
+    # INPUTS PASSED TO THE REUSABLE WORKFLOW:
+    # namespace selects the Kubernetes namespace for Dev.
+    # replicas sets the desired number of application Pods.
+    # image_tag identifies the application version to deploy.
     with:
       namespace: payment-dev
       replicas: 1
       image_tag: ${{ inputs.image_tag }}
+    # SECRET PASS-THROUGH:
+    # Make the calling workflow's available secrets accessible to the reusable
+    # workflow, including the Google Cloud authentication secrets it requires.
     secrets: inherit

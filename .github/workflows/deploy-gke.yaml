@@ -1,5 +1,13 @@
+# WORKFLOW 02: BOOTSTRAP ARGO CD AND DEPLOY PAYMENT SERVICE
+# Purpose:
+# Connect GitHub Actions to the GKE cluster, install Argo CD, and apply the
+# Argo CD Application that manages the Payment Service using GitOps.
+# It can be started manually or triggered by relevant changes on the main branch.
 name: 02-Bootstrap Argo CD and Deploy Payment Service
 
+# TRIGGERS:
+# workflow_dispatch lets a developer start this workflow manually.
+# push starts it when matching deployment files change on main.
 on:
   workflow_dispatch:
   push:
@@ -9,31 +17,54 @@ on:
       - "deploy/**"
       - ".github/workflows/deploy-gke.yaml"
 
+# PERMISSIONS:
+# contents: read allows the workflow to check out repository files.
+# id-token: write allows GitHub Actions to request an OIDC token for
+# Google Cloud Workload Identity Federation authentication.
 permissions:
   contents: read
   id-token: write
 
+# SHARED CONFIGURATION:
+# GCP_PROJECT_ID identifies the Google Cloud project.
+# GKE_CLUSTER and GKE_ZONE identify the Kubernetes cluster and its zone.
+# Keeping these values here avoids repeating them in multiple steps.
 env:
   GCP_PROJECT_ID: project-361c9ab3-160b-49e3-915
   GKE_CLUSTER: main-titan-capston-project-cluster
   GKE_ZONE: asia-southeast1-a
 
+# DEPLOY JOB:
+# Runs the following steps on a temporary GitHub-hosted Ubuntu runner.
+# The runner connects to GKE and performs the bootstrap/deployment operations.
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # STEP 1 — CHECKOUT:
+      # Download the repository so this workflow can read the Argo CD
+      # Application manifest under deploy/argocd/.
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # STEP 2 — GOOGLE CLOUD AUTHENTICATION:
+      # Authenticate using Workload Identity Federation instead of a
+      # long-lived service-account JSON key.
+      # The provider and service account are stored as GitHub Actions secrets.
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
+      # STEP 3 — INSTALL GOOGLE CLOUD CLI:
+      # Install/configure gcloud so later steps can use Google Cloud tooling.
       - name: Install gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      # STEP 4 — CONNECT TO GKE:
+      # Retrieve cluster credentials and configure kubectl for this GKE cluster.
+      # Subsequent kubectl commands will target this cluster.
       - name: Configure GKE credentials
         uses: google-github-actions/get-gke-credentials@v2
         with:
@@ -41,9 +72,16 @@ jobs:
           location: ${{ env.GKE_ZONE }}
           project_id: ${{ env.GCP_PROJECT_ID }}
 
+      # STEP 5 — VERIFY CLUSTER ACCESS:
+      # List Kubernetes nodes to confirm that authentication and cluster access work.
       - name: Check cluster access
         run: kubectl get nodes
 
+      # STEP 6 — INSTALL ARGO CD:
+      # First create the argocd namespace if it does not exist.
+      # Then install Argo CD's Kubernetes resources using its upstream manifest.
+      # Change argocd-server to a LoadBalancer Service so it can receive an
+      # external IP, then wait for its Deployment to become ready.
       - name: Install Argo CD
         run: |
           kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
@@ -51,15 +89,27 @@ jobs:
           kubectl patch svc argocd-server -n argocd --type merge -p '{"spec":{"type":"LoadBalancer"}}'
           kubectl rollout status deployment/argocd-server -n argocd --timeout=300s
 
+      # STEP 7 — REGISTER THE PAYMENT SERVICE WITH ARGO CD:
+      # Apply the Argo CD Application custom resource from the repository.
+      # Argo CD uses that Application to discover the configured Git source
+      # and reconcile the desired Kubernetes state with the cluster.
       - name: Apply Payment Service Argo CD Application
         run: |
           kubectl apply -f deploy/argocd/argocd-payment-service-application.yaml
 
+      # STEP 8 — WAIT FOR THE APPLICATION AND DISPLAY ACCESS DETAILS:
+      # Wait for the payment-stage namespace to become Active.
+      # Poll until Argo CD has created the Active Service.
+      # Set that Service to LoadBalancer, then wait for external IP addresses.
+      # Finally display Argo CD/Payment Service addresses and relevant Services/Pods.
       - name: Wait for Payment Service and show IPs
         run: |
+          # Wait until Kubernetes reports the namespace as Active.
           echo "Waiting for payment-stage namespace..."
           kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/payment-stage --timeout=180s
 
+          # Argo CD reconciliation is asynchronous, so poll for the Service
+          # instead of assuming it exists immediately after applying the Application.
           echo "Waiting for Argo CD to create Payment Services..."
           for i in {1..36}; do
             if kubectl get svc payment-service-active -n payment-stage >/dev/null 2>&1; then
@@ -71,6 +121,8 @@ jobs:
           kubectl get svc payment-service-active -n payment-stage
           kubectl patch svc payment-service-active -n payment-stage --type merge -p '{"spec":{"type":"LoadBalancer"}}'
 
+          # Cloud LoadBalancer provisioning takes time. Poll until both
+          # Services have external IPs or the retry window expires.
           echo "Waiting for external IPs..."
           for i in {1..36}; do
             ARGO_IP=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
@@ -79,6 +131,8 @@ jobs:
             sleep 10
           done
 
+          # Print the resulting addresses. PENDING means an external IP
+          # was not assigned within the polling window.
           echo "===== ACCESS URLS ====="
           echo "Argo CD: https://${ARGO_IP:-PENDING}"
           echo "Payment Service: http://${PAYMENT_IP:-PENDING}"

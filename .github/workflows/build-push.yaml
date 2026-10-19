@@ -1,6 +1,16 @@
+# WORKFLOW 01: BUILD AND PUSH PAYMENT SERVICE
+# Purpose:
+# Build the payment-service Docker image and push it to Google Artifact Registry.
+# It can run manually with a version tag or automatically after relevant changes
+# are pushed to the main branch.
 name: 01-Build and Push Payment Service
 
+# TRIGGERS:
+# workflow_dispatch = a developer starts the workflow manually from GitHub Actions.
+# push = GitHub starts it automatically when matching files change on main.
 on:
+  # MANUAL INPUT:
+  # When starting manually, choose the Docker image tag, for example v1.0.0.
   workflow_dispatch:
     inputs:
       image_tag:
@@ -9,6 +19,9 @@ on:
         default: "v1.0.0"
         type: string
 
+  # AUTOMATIC TRIGGER:
+  # Run on pushes to main, but only when payment-service source files
+  # or this workflow file itself have changed.
   push:
     branches:
       - main
@@ -16,35 +29,60 @@ on:
       - "services/payment-service/**"
       - ".github/workflows/build-push.yaml"
 
+# SHARED ENVIRONMENT VARIABLES:
+# These values are reused by the steps below to construct the image reference.
+# GCP_PROJECT_ID identifies the Google Cloud project.
+# GCP_REGION is the Artifact Registry region.
+# GAR_REPOSITORY is the Artifact Registry Docker repository.
+# IMAGE_NAME is the name assigned to the payment-service image.
 env:
   GCP_PROJECT_ID: project-361c9ab3-160b-49e3-915
   GCP_REGION: asia-southeast1
   GAR_REPOSITORY: main-titan-capston-project-artifactory-repo
   IMAGE_NAME: payment-service
 
+# JOB:
+# A job is a group of steps executed on a GitHub-hosted Ubuntu runner.
+# These steps build the Docker image and publish it to Artifact Registry.
 jobs:
   build-and-push:
     name: Build and Push Image
     runs-on: ubuntu-latest
 
+    # MINIMUM REQUIRED PERMISSIONS:
+    # contents: read allows the workflow to read repository files.
+    # id-token: write allows GitHub Actions to request an OIDC token
+    # for keyless authentication to Google Cloud Workload Identity Federation.
     permissions:
       contents: read
       id-token: write
 
     steps:
+      # STEP 1 — CHECKOUT:
+      # Download the repository contents into the GitHub runner so Docker
+      # can access the payment-service source code and Dockerfile.
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # STEP 2 — CHOOSE AND VALIDATE THE IMAGE TAG:
+      # Manual run: use the image_tag supplied in the GitHub Actions form.
+      # Automatic push: generate a tag from the first 7 characters of the commit SHA.
+      # Validate the tag before using it in a Docker image reference.
+      # GITHUB_OUTPUT makes the chosen tag available to later steps as steps.image.outputs.tag.
       - name: Set image tag
         id: image
         shell: bash
         run: |
+          # GITHUB_EVENT_NAME tells us which trigger started this run.
+          # workflow_dispatch means a person started it manually.
+          # Otherwise, use a commit-based tag so automatic builds are distinguishable.
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             TAG="${{ inputs.image_tag }}"
           else
             TAG="build-${GITHUB_SHA::7}"
           fi
 
+          # Reject invalid Docker tags early so a bad value cannot break later commands.
           if [[ ! "$TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
             echo "Invalid Docker image tag: $TAG"
             exit 1
@@ -53,32 +91,52 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Building image tag: $TAG"
 
+      # STEP 3 — AUTHENTICATE TO GOOGLE CLOUD:
+      # Workload Identity Federation lets GitHub Actions obtain short-lived
+      # Google Cloud credentials without storing a long-lived service-account key.
+      # GCP_WIF_PROVIDER and GCP_SERVICE_ACCOUNT are configured as GitHub secrets.
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
+      # STEP 4 — INSTALL GOOGLE CLOUD CLI:
+      # Makes the gcloud command available to the following steps.
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      # STEP 5 — CONFIGURE DOCKER AUTHENTICATION:
+      # Configure Docker to authenticate to Artifact Registry in this region.
+      # This allows docker push to upload the image using the Google Cloud credentials.
       - name: Configure Docker
         run: |
           gcloud auth configure-docker \
             "${GCP_REGION}-docker.pkg.dev" \
             --quiet
 
+      # STEP 6 — BUILD THE IMAGE:
+      # docker build packages the application and its dependencies into an image.
+      # -t assigns the full registry/repository/image:tag name.
+      # ./services/payment-service is the build context, where Docker looks for
+      # the Dockerfile and files needed to build the image.
       - name: Build Docker image
         run: |
           docker build \
             -t "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/${IMAGE_NAME}:${{ steps.image.outputs.tag }}" \
             ./services/payment-service
 
+      # STEP 7 — PUSH THE IMAGE:
+      # Upload the locally built image to Google Artifact Registry.
+      # Later deployment workflows can pull this image and run it in Kubernetes.
       - name: Push Docker image
         run: |
           docker push \
             "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/${IMAGE_NAME}:${{ steps.image.outputs.tag }}"
 
+      # STEP 8 — DISPLAY THE RESULT:
+      # Print the full image reference in the workflow log.
+      # This makes it easy to identify which exact image was published.
       - name: Display image reference
         run: |
           echo "Successfully pushed:"

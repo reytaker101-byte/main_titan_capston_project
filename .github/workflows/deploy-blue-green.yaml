@@ -1,6 +1,10 @@
+# WORKFLOW 05: REUSABLE BLUE-GREEN DEPLOYMENT
+# Deploy an image to the candidate color, test it, and optionally switch traffic.
 name: Reusable Blue Green Deployment
 
+# Supports manual execution and calls from other GitHub Actions workflows.
 on:
+  # Manual execution inputs displayed in the GitHub Actions interface.
   workflow_dispatch:
     inputs:
       namespace:
@@ -44,6 +48,7 @@ on:
           - deploy-only
         default: rollback
 
+  # Inputs and secrets supplied by workflows that reuse this workflow.
   workflow_call:
     inputs:
       namespace:
@@ -81,12 +86,14 @@ env:
   GAR_REPOSITORY: main-titan-capston-project-artifactory-repo
 
 jobs:
+  # Main job: validate inputs, connect to GKE, deploy, test, and optionally activate.
   deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Reject invalid image tags, namespaces, colors, modes, or replica counts.
       - name: Validate inputs
         env:
           IMAGE_TAG: ${{ inputs.image_tag }}
@@ -107,6 +114,7 @@ jobs:
           fi
           [[ "$REPLICAS" =~ ^[1-9][0-9]*$ ]] || { echo "replicas must be positive"; exit 1; }
 
+      # Authenticate using GitHub OIDC and Workload Identity Federation.
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -116,6 +124,7 @@ jobs:
       - name: Install Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      # Configure kubectl credentials for the selected GKE cluster.
       - name: Connect to GKE
         uses: google-github-actions/get-gke-credentials@v2
         with:
@@ -123,6 +132,7 @@ jobs:
           location: ${{ env.GKE_ZONE }}
           project_id: ${{ env.GCP_PROJECT_ID }}
 
+      # Main deployment: prepare resources, select a color, deploy, test, and optionally switch traffic.
       - name: Deploy candidate, test it, and optionally activate
         env:
           NAMESPACE: ${{ inputs.namespace }}
@@ -134,6 +144,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Map the namespace to its environment-specific Kubernetes manifests.
           case "$NAMESPACE" in
             payment-dev) ENV_DIR=dev ;;
             payment-stage-pilot) ENV_DIR=stage-pilot ;;
@@ -143,7 +154,7 @@ jobs:
             *) echo "Unsupported namespace: $NAMESPACE"; exit 1 ;;
           esac
 
-          # Create only missing resources. Never overwrite existing resources here.
+          # Create missing resources only; preserve resources that already exist.
           kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
           for resource in \
@@ -160,6 +171,7 @@ jobs:
             fi
           done
 
+          # Determine which color currently receives live traffic.
           ACTIVE_COLOR="$(kubectl get service payment-service-active -n "$NAMESPACE" -o jsonpath='{.spec.selector.color}')"
           [[ "$ACTIVE_COLOR" == blue || "$ACTIVE_COLOR" == green ]] || {
             echo "Active Service has an invalid color selector: $ACTIVE_COLOR"
@@ -168,6 +180,7 @@ jobs:
 
           if [[ "$ACTIVE_COLOR" == blue ]]; then INACTIVE_COLOR=green; else INACTIVE_COLOR=blue; fi
 
+          # Auto selects the color opposite to the currently active color.
           if [[ "$REQUESTED_COLOR" == auto ]]; then
             TARGET_COLOR="$INACTIVE_COLOR"
           else
@@ -180,6 +193,7 @@ jobs:
             exit 1
           fi
 
+          # Rollback reuses the selected deployment and preserves its existing image.
           if [[ "$MODE" == rollback ]]; then
             echo "Rollback mode: preserve the selected deployment's existing image."
 
@@ -233,6 +247,7 @@ jobs:
             exit 0
           fi
 
+          # Construct the full Artifact Registry image reference.
           IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/dev/payment-service:${IMAGE_TAG}"
 
           echo "Namespace: $NAMESPACE"
@@ -255,7 +270,7 @@ jobs:
           kubectl rollout status "deployment/payment-service-${TARGET_COLOR}" \
             -n "$NAMESPACE" --timeout=300s
 
-          # Point Preview at the candidate so it can be tested independently.
+          # Preview tests the candidate without changing live traffic.
           kubectl patch service payment-service-preview -n "$NAMESPACE" \
             --type=merge \
             -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${TARGET_COLOR}\"}}}"
@@ -263,7 +278,7 @@ jobs:
           kubectl rollout status "deployment/payment-service-${TARGET_COLOR}" \
             -n "$NAMESPACE" --timeout=120s
 
-          # Verify the application's real /health endpoint through Preview.
+          # Check application health through the Preview Service.
           kubectl port-forward -n "$NAMESPACE" \
             service/payment-service-preview 18004:80 >/tmp/payment-service-port-forward.log 2>&1 &
           PF_PID=$!
@@ -291,17 +306,18 @@ jobs:
 
           echo "Candidate health check passed."
 
+          # deploy-only finishes after testing without changing the Active Service.
           if [[ "$MODE" == deploy-only ]]; then
             echo "Deploy-only complete. Active Service remains on $ACTIVE_COLOR."
             exit 0
           fi
 
-          # Switch traffic only after candidate rollout and health check pass.
+          # Switch live traffic only after rollout and health checks pass.
           kubectl patch service payment-service-active -n "$NAMESPACE" \
             --type=merge \
             -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${TARGET_COLOR}\"}}}"
 
-          # Preview now points to the previous color for inspection/rollback.
+          # Keep the previous color available through Preview for inspection or rollback.
           kubectl patch service payment-service-preview -n "$NAMESPACE" \
             --type=merge \
             -p "{\"spec\":{\"selector\":{\"app\":\"payment-service\",\"color\":\"${ACTIVE_COLOR}\"}}}"

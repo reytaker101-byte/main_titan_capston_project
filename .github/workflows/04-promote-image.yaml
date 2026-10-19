@@ -1,32 +1,47 @@
+# WORKFLOW 04: PROMOTE AN EXISTING IMAGE
+# Deploy an existing Payment Service image to a selected environment.
+# The reusable workflow handles the actual deployment.
 name: 04 - Promote Image Across Environments
 
+# TRIGGER: Start this workflow manually from GitHub Actions.
 on:
   workflow_dispatch:
     inputs:
+      # IMAGE TAG: Specify an image version already in Artifact Registry.
+      # This workflow does not build a new Docker image.
       image_tag:
         description: Immutable image tag already built and pushed
         required: true
         type: string
+      # DESTINATION: Choose which Stage or Production environment to deploy to.
       target_environment:
         description: Environment to promote the image into
         required: true
         type: choice
+        # These are the four permitted destination environments.
         options:
           - stage-pilot
           - stage-fleet
           - prod-pilot
           - prod-fleet
 
+# PERMISSIONS: Read repository contents and request a Google Cloud OIDC token.
 permissions:
   contents: read
   id-token: write
 
+# JOB: Delegate deployment to the shared reusable workflow.
 jobs:
   promote:
     name: Promote to selected environment
+    # Reuse the common Blue-Green deployment implementation.
     uses: ./.github/workflows/deploy-blue-green.yaml
+    # Pass the image tag, Kubernetes namespace, and desired replica count.
     with:
       image_tag: ${{ inputs.image_tag }}
+      # Map the selected environment to its Kubernetes namespace.
       namespace: ${{ inputs.target_environment == 'stage-pilot' && 'payment-stage-pilot' || inputs.target_environment == 'stage-fleet' && 'payment-stage-fleet' || inputs.target_environment == 'prod-pilot' && 'payment-prod-pilot' || 'payment-prod-fleet' }}
+      # Production environments use 2 replicas; Stage uses 1.
       replicas: ${{ startsWith(inputs.target_environment, 'prod-') && 2 || 1 }}
+    # Pass required caller secrets to the reusable workflow.
     secrets: inherit
