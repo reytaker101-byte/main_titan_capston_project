@@ -13,6 +13,18 @@ on:
           - stage-fleet
           - prod-pilot
           - prod-fleet
+      expected_active_color:
+        description: Confirm the color currently receiving traffic
+        required: true
+        type: choice
+        options:
+          - blue
+          - green
+      confirm_rollback:
+        description: Confirm that you want to switch traffic to the other color
+        required: true
+        type: boolean
+        default: false
 
 jobs:
   rollback:
@@ -46,9 +58,16 @@ jobs:
       - name: Restore previous color
         env:
           ENVIRONMENT: ${{ inputs.environment }}
+        EXPECTED_ACTIVE_COLOR: ${{ inputs.expected_active_color }}
+        CONFIRM_ROLLBACK: ${{ inputs.confirm_rollback }}
         shell: bash
         run: |
           set -euo pipefail
+
+          if [[ "$CONFIRM_ROLLBACK" != "true" ]]; then
+            echo "Rollback not confirmed. Set confirm_rollback to true to proceed."
+            exit 1
+          fi
 
           case "$ENVIRONMENT" in
             dev)         NS=payment-dev;          REPLICAS=1 ;;
@@ -62,6 +81,12 @@ jobs:
           CURRENT="$(kubectl get service payment-service-active \
             -n "$NS" -o jsonpath='{.spec.selector.color}')"
 
+          if [[ "$CURRENT" != "$EXPECTED_ACTIVE_COLOR" ]]; then
+            echo "Safety check failed: expected active color '$EXPECTED_ACTIVE_COLOR' but found '$CURRENT'."
+            echo "Traffic may have changed since you opened the workflow. Re-check before retrying."
+            exit 1
+          fi
+
           if [[ "$CURRENT" == "blue" ]]; then
             PREVIOUS=green
           elif [[ "$CURRENT" == "green" ]]; then
@@ -71,11 +96,23 @@ jobs:
             exit 1
           fi
 
+          ACTIVE_IMAGE="$(kubectl get deployment "payment-service-${CURRENT}" \
+            -n "$NS" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          PREVIOUS_IMAGE="$(kubectl get deployment "payment-service-${PREVIOUS}" \
+            -n "$NS" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+
+          if [[ -z "$PREVIOUS_IMAGE" || "$PREVIOUS_IMAGE" == "$ACTIVE_IMAGE" ]]; then
+            echo "Rollback target is missing or uses the same image as the active deployment."
+            echo "No traffic was changed."
+            exit 1
+          fi
+
+          echo "Current image:  $ACTIVE_IMAGE"
+          echo "Rollback image: $PREVIOUS_IMAGE"
+
           DEPLOYMENT="payment-service-${PREVIOUS}"
 
-          kubectl get deployment "$DEPLOYMENT" -n "$NS" >/dev/null
-
-          kubectl scale "deployment/payment-service-${PREVIOUS}" \
+          kubectl scale "deployment/${DEPLOYMENT}" \
             -n "$NS" --replicas="$REPLICAS"
 
           kubectl rollout status "deployment/${DEPLOYMENT}" \
