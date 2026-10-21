@@ -6642,7 +6642,2007 @@ Container ki configured memory limit
 
 
 
+------------------------------------------
 
+**Refined Notes**
+AI SRE COPILOT
+COMPLETE PROJECT DOCUMENTATION AND INTERVIEW PREPARATION
+
+============================================================
+1. PROJECT OVERVIEW
+============================================================
+
+1.1 What is AI SRE Copilot?
+
+AI SRE Copilot is a Python application designed to assist engineers
+with investigating incidents in Kubernetes.
+
+When an application fails, an engineer normally checks:
+- Pod status
+- Container status
+- Resource requests and limits
+- Kubernetes events
+- Container logs
+- Other relevant monitoring information
+
+The engineer then analyses this information to determine the
+possible cause of the failure.
+
+AI SRE Copilot automates part of this investigation.
+
+It collects available information from Kubernetes and sends the
+evidence to an AI model. The AI model analyses the evidence and
+returns a structured diagnosis.
+
+IMPORTANT:
+The application assists with diagnosis. It does not automatically
+apply fixes to Kubernetes in its current implementation.
+
+1.2 Technologies Used
+
+Python:
+The programming language used to develop the application.
+
+FastAPI:
+The Python framework used to expose the application through HTTP APIs.
+
+Kubernetes:
+The platform from which the application collects workload information.
+
+Kubernetes Python Client:
+The library used by Python code to communicate with the Kubernetes API.
+
+OpenAI API:
+The service used to generate an AI-assisted diagnosis.
+
+SQLite:
+The lightweight database used by the existing incident-related
+functionality.
+
+Docker:
+The technology used to package applications into containers.
+
+1.3 What Have We Demonstrated?
+
+We created a Kubernetes Pod that intentionally consumed increasing
+amounts of memory.
+
+The container was terminated, and Kubernetes reported:
+
+Reason: OOMKilled
+Exit code: 137
+
+We then tested the live diagnosis endpoint.
+
+The endpoint successfully collected information from Kubernetes
+and returned an AI-generated diagnosis.
+
+This demonstrated the live diagnosis workflow for an OOM-related
+container failure.
+
+It does not prove that every possible Kubernetes failure can be
+diagnosed correctly.
+
+
+============================================================
+2. UNDERSTANDING THE ENVIRONMENT
+============================================================
+
+2.1 Check the Active Kubernetes Context
+
+COMMAND:
+
+kubectl config current-context
+
+ACTUAL OBSERVED OUTPUT:
+
+docker-desktop
+
+WHAT DOES THIS OUTPUT MEAN?
+
+The output identifies the active Kubernetes context.
+
+A Kubernetes context tells kubectl which cluster and associated
+configuration it should use.
+
+Here, the active context is docker-desktop.
+
+WHY DO WE CHECK THIS?
+
+Imagine having access to development, testing, and production
+clusters.
+
+If you accidentally execute a command against the wrong cluster,
+you could investigate or modify the wrong environment.
+
+Checking the context helps prevent that mistake.
+
+INTERVIEW ANSWER:
+
+"Before troubleshooting, I verify the active Kubernetes context
+to ensure that I am investigating the intended cluster."
+
+
+------------------------------------------------------------
+2.2 Check Kubernetes Nodes
+------------------------------------------------------------
+
+COMMAND:
+
+kubectl get nodes
+
+OBSERVED ENVIRONMENT DETAILS:
+
+Node name: desktop-control-plane
+Kubernetes version: v1.31.1
+
+NOTE:
+The details above were observed during the project testing.
+The complete original table output is not reproduced here.
+
+WHAT DOES THIS COMMAND DO?
+
+It lists the Kubernetes nodes registered with the cluster.
+
+WHAT IS A NODE?
+
+A node is a machine or virtual machine that provides resources
+for running Kubernetes workloads.
+
+WHAT IS THE CONTROL PLANE?
+
+The control plane manages the cluster and coordinates Kubernetes
+operations.
+
+The exact architecture depends on the Kubernetes environment.
+
+In this Docker Desktop test environment, the observed node was:
+
+desktop-control-plane
+
+WHAT DOES THE KUBERNETES VERSION MEAN?
+
+The version identifies the Kubernetes version reported for the node.
+
+WHY IS THIS INFORMATION USEFUL?
+
+It helps confirm that the cluster is available and identifies
+the environment in which the investigation is taking place.
+
+INTERVIEW ANSWER:
+
+"I checked the cluster context and node information before
+investigating the failed Pod."
+
+
+============================================================
+3. UNDERSTANDING THE KUBERNETES WORKLOADS
+============================================================
+
+3.1 The Payment Service Deployment
+
+The test environment contained a Deployment named:
+
+payment-service
+
+Container image:
+
+nginx:1.27
+
+Replicas:
+
+3
+
+The Deployment was observed to be healthy, with three replicas
+available.
+
+IMPORTANT:
+This was a sample NGINX workload. It was not an actual payment
+processing application.
+
+3.2 What Is a Deployment?
+
+A Deployment manages replicated application Pods.
+
+For example, a Deployment configured for three replicas attempts
+to maintain three matching Pods.
+
+Conceptually:
+
+payment-service
+    |
+    +---- Pod 1
+    |
+    +---- Pod 2
+    |
+    +---- Pod 3
+
+If a managed Pod fails, Kubernetes can create a replacement
+to maintain the desired replica count.
+
+The exact behaviour depends on the workload configuration.
+
+3.3 What Is a Pod?
+
+A Pod is the smallest deployable unit in Kubernetes.
+
+A Pod contains one or more containers.
+
+Our test Pod was named:
+
+oom-test
+
+Its container was named:
+
+memory-hog
+
+3.4 What Is a Container?
+
+A container runs a process in an isolated environment.
+
+The test container used:
+
+python:3.12-alpine
+
+This image provides Python in a lightweight Alpine Linux-based
+environment.
+
+The container ran a Python program that repeatedly allocated memory.
+
+The purpose was to reproduce an actual memory-related failure.
+
+
+============================================================
+4. REPRODUCING THE OOM FAILURE
+============================================================
+
+4.1 What Does OOM Mean?
+
+OOM stands for Out Of Memory.
+
+A container can be terminated because of an out-of-memory condition
+when it exceeds its memory limit.
+
+In our test, we intentionally configured a container to consume
+increasing amounts of memory.
+
+4.2 Understanding Memory Requests and Limits
+
+Memory request:
+
+16Mi
+
+Memory limit:
+
+32Mi
+
+Mi stands for mebibytes.
+
+One Mi is equal to 1,048,576 bytes.
+
+A memory request is used by Kubernetes when evaluating resource
+requirements for scheduling.
+
+A memory limit constrains the amount of memory the container
+can use under its configured resource limits.
+
+The request and limit serve different purposes.
+
+For our test:
+
+- The container requested 16Mi of memory.
+- The container had a memory limit of 32Mi.
+- The Python program continued allocating memory.
+- The container was eventually terminated.
+
+IMPORTANT:
+The configured limit was 32Mi. We did not measure the exact peak
+memory usage at the moment of termination.
+
+
+------------------------------------------------------------
+4.3 The oom-test.yaml File
+------------------------------------------------------------
+
+FILE:
+
+oom-test.yaml
+
+CONFIGURATION:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-test
+  namespace: payment-dev
+spec:
+  restartPolicy: Never
+  containers:
+    - name: memory-hog
+      image: python:3.12-alpine
+      command:
+        - python
+        - -c
+        - "a=[]; exec('while True: a.append(bytearray(1024*1024))')"
+      resources:
+        requests:
+          memory: "16Mi"
+        limits:
+          memory: "32Mi"
+
+
+EXPLANATION OF THE YAML:
+
+apiVersion: v1
+
+This specifies the Kubernetes API version for the Pod resource.
+
+kind: Pod
+
+This tells Kubernetes that we are defining a Pod.
+
+metadata:
+
+This section contains identifying information.
+
+name: oom-test
+
+This is the Pod name.
+
+namespace: payment-dev
+
+This places the Pod in the payment-dev namespace.
+
+spec:
+
+This section defines the desired configuration of the Pod.
+
+restartPolicy: Never
+
+This prevents Kubernetes from automatically restarting the container
+within this Pod after it terminates.
+
+This makes the failed container easier to inspect for this test.
+
+containers:
+
+This section defines the containers inside the Pod.
+
+name: memory-hog
+
+This is the container name.
+
+image: python:3.12-alpine
+
+This is the container image.
+
+command:
+
+This specifies the command executed inside the container.
+
+The Python code repeatedly allocates byte arrays of approximately
+one MiB and appends them to a list.
+
+Because the list continues growing, the process continues requesting
+additional memory.
+
+resources.requests.memory: "16Mi"
+
+This specifies the memory request.
+
+resources.limits.memory: "32Mi"
+
+This specifies the memory limit.
+
+WHY DID WE CREATE THIS POD?
+
+We needed a controlled way to reproduce a real failure so we could
+test whether the application could collect and analyse evidence
+from an actual failed Kubernetes workload.
+
+
+------------------------------------------------------------
+4.4 Create the Test Pod
+------------------------------------------------------------
+
+COMMAND:
+
+kubectl apply -f oom-test.yaml
+
+EXPECTED OUTPUT WHEN CREATING THE POD FOR THE FIRST TIME:
+
+pod/oom-test created
+
+OUTPUT EXPLANATION:
+
+pod/oom-test
+
+This identifies the resource type and name.
+
+pod means the resource is a Pod.
+
+oom-test is its name.
+
+created
+
+This indicates that Kubernetes accepted the request to create
+the resource.
+
+IMPORTANT:
+This is the expected output for first-time creation, not a claim
+that the command's exact historical output was captured.
+
+Does "created" mean the application is healthy?
+
+NO.
+
+It means the resource was created. The container can still fail
+after it starts.
+
+That is exactly what happened in our test.
+
+
+------------------------------------------------------------
+4.5 Check the Pod Status
+------------------------------------------------------------
+
+COMMAND:
+
+kubectl get pod oom-test -n payment-dev
+
+ACTUAL OBSERVED OUTPUT:
+
+NAME       READY   STATUS   RESTARTS
+oom-test   0/1     Failed   0
+
+
+OUTPUT EXPLANATION:
+
+NAME:
+
+oom-test
+
+This is the name of the Pod we are investigating.
+
+READY:
+
+0/1
+
+The Pod contains one container, but zero containers are ready.
+
+If the output were 1/1, it would indicate that one out of one
+containers was ready at the time of the check.
+
+STATUS:
+
+Failed
+
+The Pod has reached the Failed phase.
+
+This indicates that the Pod did not complete successfully.
+
+RESTARTS:
+
+0
+
+The restart count is zero.
+
+This is consistent with the Pod's restartPolicy being Never.
+
+IMPORTANT OBSERVATION:
+
+The Pod is not running successfully.
+
+However, this output does not tell us the exact reason for failure.
+
+We need more information.
+
+NEXT STEP:
+
+Run kubectl describe to inspect the detailed container state.
+
+
+------------------------------------------------------------
+4.6 Inspect the Failed Pod
+------------------------------------------------------------
+
+COMMAND:
+
+kubectl describe pod oom-test -n payment-dev
+
+IMPORTANT OBSERVED DETAILS:
+
+Pod phase: Failed
+Container termination reason: OOMKilled
+Container exit code: 137
+Memory request: 16Mi
+Memory limit: 32Mi
+Node: desktop-control-plane
+Pod IP: 10.244.0.10
+
+NOTE:
+This is a summary of the observed output, not the complete
+original describe output.
+
+
+OUTPUT EXPLANATION:
+
+Pod phase: Failed
+
+Kubernetes reports that the Pod has failed.
+
+Termination reason: OOMKilled
+
+This is the most important finding.
+
+OOMKilled indicates that the container was terminated because
+of an out-of-memory condition.
+
+Exit code: 137
+
+Exit code 137 commonly corresponds to termination by SIGKILL,
+which uses signal number 9.
+
+In our test, Kubernetes explicitly reported OOMKilled, so the
+evidence supports an out-of-memory termination.
+
+Memory request: 16Mi
+
+This is the memory request configured for the container.
+
+Memory limit: 32Mi
+
+This is the configured maximum memory limit for the container.
+
+Node: desktop-control-plane
+
+This identifies the node on which the Pod ran.
+
+Pod IP: 10.244.0.10
+
+This is the Pod IP reported during the test.
+
+WHY IS THIS OUTPUT IMPORTANT?
+
+It connects the observed failure to the container's termination
+state and resource configuration.
+
+The strongest evidence is:
+
+1. The Pod failed.
+2. The container termination reason was OOMKilled.
+3. The exit code was 137.
+4. The configured memory limit was 32Mi.
+
+INTERVIEW ANSWER:
+
+"I confirmed the failure by inspecting the Pod details. Kubernetes
+reported OOMKilled with exit code 137, and the container had a
+configured memory limit of 32Mi. This supported the conclusion
+that the container was terminated because of an OOM condition."
+
+
+------------------------------------------------------------
+4.7 Check Kubernetes Events
+------------------------------------------------------------
+
+COMMAND:
+
+kubectl get events -n payment-dev
+
+OBSERVED EVENT CATEGORIES INCLUDED:
+
+- Pod Scheduled
+- Container image pulled
+- Container created
+- Container started
+- ReplicaSet scaling activity
+
+NOTE:
+The environment contained both current Pod lifecycle events and
+older ScalingReplicaSet events. This is a summary, not an exact
+transcript of every event row.
+
+WHAT ARE KUBERNETES EVENTS?
+
+Events provide information about actions and conditions observed
+by Kubernetes.
+
+For example:
+
+Scheduled
+
+Kubernetes assigned the Pod to a node.
+
+Pulled
+
+The container image was pulled or obtained from the local image
+cache.
+
+Created
+
+The container was created.
+
+Started
+
+The container process was started.
+
+ScalingReplicaSet
+
+A ReplicaSet was scaled.
+
+WHY DO EVENTS MATTER?
+
+Events provide a timeline of Kubernetes activity.
+
+They can help engineers understand what happened before or during
+an incident.
+
+IMPORTANT LIMITATION:
+
+Older events may belong to earlier resources or previous operations.
+
+We must not assume every event in the namespace is related to
+the current incident.
+
+A more focused command is:
+
+kubectl get events -n payment-dev --field-selector involvedObject.name=oom-test
+
+This filters events by the involved resource name.
+
+However, filtering by name alone can still include historical events
+associated with an earlier resource that had the same name.
+
+The collector should be improved to filter by the current Pod UID
+as well.
+
+
+------------------------------------------------------------
+4.8 Check Container Logs
+------------------------------------------------------------
+
+COMMAND:
+
+kubectl logs oom-test -n payment-dev
+
+ACTUAL OBSERVED RESULT:
+
+The command returned no log content.
+
+OUTPUT EXPLANATION:
+
+kubectl logs
+
+This command retrieves the logs available for a container.
+
+oom-test
+
+This identifies the Pod.
+
+-n payment-dev
+
+This specifies the namespace.
+
+WHY WERE THE LOGS EMPTY?
+
+No useful log content was available for this test container.
+
+A process can terminate before producing useful logs.
+
+Alternatively, the application may not log the information
+needed to explain its failure.
+
+DO EMPTY LOGS MEAN NOTHING WENT WRONG?
+
+NO.
+
+In this incident, Kubernetes provided useful evidence through
+the termination reason and exit code.
+
+The evidence was:
+
+Reason: OOMKilled
+Exit code: 137
+
+This is why engineers should not rely only on application logs.
+
+INTERVIEW ANSWER:
+
+"The logs were empty, so I checked the Kubernetes container state.
+The termination reason was OOMKilled and the exit code was 137.
+This provided evidence of the failure even though the logs did not."
+
+
+============================================================
+5. HOW THE LIVE DIAGNOSIS WORKFLOW WORKS
+============================================================
+
+The live diagnosis workflow has the following steps.
+
+STEP 1:
+
+The user submits a namespace and Pod name.
+
+STEP 2:
+
+FastAPI receives the request.
+
+STEP 3:
+
+The Kubernetes collector connects to the Kubernetes API.
+
+STEP 4:
+
+The collector reads the Pod information.
+
+STEP 5:
+
+The collector gathers container status, resource configuration,
+events, logs, and owner information.
+
+STEP 6:
+
+The application combines the collected evidence into an
+incident object.
+
+STEP 7:
+
+The AI diagnosis engine sends the incident information to the
+configured OpenAI model.
+
+STEP 8:
+
+The AI model generates a structured analysis.
+
+STEP 9:
+
+FastAPI returns the collected evidence and diagnosis to the caller.
+
+WORKFLOW:
+
+User
+  |
+  v
+FastAPI endpoint
+  |
+  v
+Kubernetes evidence collector
+  |
+  v
+Kubernetes API
+  |
+  v
+Pod status, container state, resources, events and logs
+  |
+  v
+AI diagnosis engine
+  |
+  v
+OpenAI API
+  |
+  v
+Structured diagnosis returned to the user
+
+
+============================================================
+6. THE KUBERNETES EVIDENCE COLLECTOR
+============================================================
+
+FILE:
+
+app/diagnosis/k8s_collector.py
+
+PURPOSE:
+
+This module collects information about a Kubernetes Pod.
+
+It reads information from Kubernetes. It does not apply changes.
+
+
+------------------------------------------------------------
+6.1 Loading Kubernetes Configuration
+------------------------------------------------------------
+
+CODE:
+
+def get_api_clients():
+    try:
+        config.load_incluster_config()
+    except ConfigException:
+        config.load_kube_config()
+
+    return client.CoreV1Api(), client.AppsV1Api()
+
+
+EXPLANATION:
+
+config.load_incluster_config()
+
+This attempts to load Kubernetes configuration when the application
+is running inside a cluster.
+
+config.load_kube_config()
+
+If in-cluster configuration is unavailable, the code attempts
+to load the local Kubernetes configuration.
+
+This supports local development with kubeconfig.
+
+client.CoreV1Api()
+
+This client provides access to core Kubernetes resources, including
+Pods and events.
+
+client.AppsV1Api()
+
+This client provides access to resources such as Deployments
+and ReplicaSets.
+
+IMPORTANT CODE OBSERVATION:
+
+The current collector creates both API clients, but the
+AppsV1Api client is not used by the current evidence-collection
+function.
+
+This is a potential code-cleanup opportunity.
+
+
+------------------------------------------------------------
+6.2 Reading Pod Information
+------------------------------------------------------------
+
+The collector reads the requested Pod using the Kubernetes API.
+
+It collects:
+
+- Pod name
+- Namespace
+- Pod phase
+- Node name
+- Pod IP
+- Owner references
+
+WHY?
+
+These fields identify the resource being investigated and describe
+its current or last reported state.
+
+For the tested Pod, the collector returned:
+
+Namespace: payment-dev
+Pod: oom-test
+Pod phase: Failed
+Node: desktop-control-plane
+Pod IP: 10.244.0.10
+Owner: null
+
+OUTPUT EXPLANATION:
+
+Namespace and Pod identify the resource.
+
+Pod phase indicates that the Pod failed.
+
+Node identifies where the Pod ran.
+
+Pod IP identifies the Pod IP reported by Kubernetes.
+
+Owner: null means the collector did not find an owner reference.
+
+The oom-test Pod was created directly rather than through a
+Deployment, so the absence of an owner reference was expected.
+
+
+------------------------------------------------------------
+6.3 Reading Container Status
+------------------------------------------------------------
+
+The collector records information such as:
+
+Container name
+Ready status
+Restart count
+Container state
+
+For the OOM test, the important values were:
+
+Container: memory-hog
+Ready: false
+Restart count: 0
+Reason: OOMKilled
+Exit code: 137
+
+OUTPUT EXPLANATION:
+
+Container: memory-hog
+
+Identifies the container inside the Pod.
+
+Ready: false
+
+The container was not ready.
+
+Restart count: 0
+
+The container had not been restarted within this Pod.
+
+Reason: OOMKilled
+
+Kubernetes reported an out-of-memory termination.
+
+Exit code: 137
+
+The container exited with code 137.
+
+These fields provide important evidence for diagnosis.
+
+
+------------------------------------------------------------
+6.4 Reading Resource Configuration
+------------------------------------------------------------
+
+The collector reads the container's configured resources.
+
+For the tested container:
+
+Image: python:3.12-alpine
+Memory request: 16Mi
+Memory limit: 32Mi
+
+OUTPUT EXPLANATION:
+
+The image identifies the container image used.
+
+The memory request describes the requested memory for scheduling.
+
+The memory limit constrains the container's memory usage.
+
+The collector reads configured resource values.
+
+It does not directly measure the exact historical peak memory
+consumption at the moment the container was terminated.
+
+
+------------------------------------------------------------
+6.5 Reading Events and Logs
+------------------------------------------------------------
+
+The collector retrieves events associated with the Pod name.
+
+It records details such as:
+
+Event type
+Event reason
+Event message
+Event count
+Available timestamp
+
+The collector also attempts to retrieve the last 100 lines of
+container logs, including timestamps.
+
+If log retrieval fails, the collector records a message indicating
+that logs were unavailable.
+
+This allows the application to retain other collected evidence
+even if a log request fails.
+
+IMPORTANT:
+
+An empty log response is different from a log retrieval error.
+
+The distinction matters when analysing an incident.
+
+
+============================================================
+7. THE LIVE DIAGNOSIS API
+============================================================
+
+FILE:
+
+app/main.py
+
+ENDPOINT:
+
+POST /diagnose/live
+
+
+------------------------------------------------------------
+7.1 The Request Model
+------------------------------------------------------------
+
+CODE:
+
+class LiveDiagnosisRequest(BaseModel):
+    namespace: str
+    pod_name: str
+
+
+EXPLANATION:
+
+BaseModel comes from Pydantic.
+
+Pydantic helps FastAPI validate and process request data.
+
+The endpoint expects two fields:
+
+namespace
+pod_name
+
+Example request:
+
+{
+  "namespace": "payment-dev",
+  "pod_name": "oom-test"
+}
+
+The request tells the application which Pod to investigate.
+
+
+------------------------------------------------------------
+7.2 What Happens Inside the Endpoint?
+------------------------------------------------------------
+
+The endpoint calls the collector:
+
+collect_pod_evidence(
+    namespace=request.namespace,
+    pod_name=request.pod_name,
+)
+
+The collector returns information gathered from Kubernetes.
+
+The endpoint then creates an incident object and calls:
+
+diagnose_with_ai(incident)
+
+The returned API response contains:
+
+evidence_source
+collected_evidence
+diagnosis
+
+OUTPUT EXPLANATION:
+
+evidence_source:
+
+Identifies where the evidence came from.
+
+In the successful test, it was:
+
+live Kubernetes API
+
+collected_evidence:
+
+Contains the information retrieved from Kubernetes.
+
+diagnosis:
+
+Contains the AI-generated analysis of that evidence.
+
+WHY KEEP THESE SEPARATE?
+
+The collected evidence represents what the application retrieved.
+
+The diagnosis represents the AI model's interpretation.
+
+An AI interpretation can be incorrect, so an engineer must be
+able to inspect the underlying evidence independently.
+
+
+------------------------------------------------------------
+7.3 Error Handling
+------------------------------------------------------------
+
+The endpoint catches exceptions and returns HTTP 502 when the
+live diagnosis process fails.
+
+The error response advises checking:
+
+- Server logs
+- Kubernetes access
+- Pod permissions
+- OpenAI API configuration
+
+HTTP 502 is an HTTP error status indicating a gateway or upstream
+failure.
+
+In this application, it is used as a general response when
+live diagnosis fails.
+
+The full exception is logged by the application for troubleshooting.
+
+A production implementation should use more specific error handling
+where appropriate.
+
+
+============================================================
+8. RUNNING THE APPLICATION
+============================================================
+
+8.1 Start the FastAPI Server
+
+COMMAND:
+
+uvicorn app.main:app --host 127.0.0.1 --port 8001
+
+EXPLANATION:
+
+uvicorn
+
+The ASGI server used to run the FastAPI application.
+
+app.main
+
+Identifies the Python module containing the application.
+
+app.main:app
+
+The part before the colon identifies the module.
+
+The part after the colon identifies the application object named app.
+
+--host 127.0.0.1
+
+Binds the server to the local loopback interface.
+
+This is intended for access from the same machine.
+
+--port 8001
+
+Tells the server to listen on port 8001.
+
+OBSERVED RESULT:
+
+The server started successfully on port 8001.
+
+NOTE:
+
+This is a summary of the observed startup result, not an exact
+copy of the full Uvicorn startup log.
+
+WHY USE PORT 8001?
+
+The live diagnosis test was run against the local application
+on port 8001.
+
+The existing Docker development container used port 8000, but
+it was not assumed to contain the latest code.
+
+IMPORTANT SECURITY NOTE:
+
+Binding to 127.0.0.1 restricts the server to the local machine.
+
+Before exposing the application to a network, add appropriate
+authentication, authorization, namespace restrictions, and
+least-privilege Kubernetes RBAC.
+
+
+============================================================
+9. TESTING THE LIVE DIAGNOSIS ENDPOINT
+============================================================
+
+9.1 The curl Command
+
+COMMAND:
+
+curl -sS -X POST http://127.0.0.1:8001/diagnose/live \
+  -H 'Content-Type: application/json' \
+  -d '{"namespace":"payment-dev","pod_name":"oom-test"}'
+
+
+EXPLANATION:
+
+curl
+
+A command-line tool used to send HTTP requests.
+
+-sS
+
+Suppresses most progress output while still showing errors.
+
+-X POST
+
+Sends a POST request.
+
+POST allows us to send data to the API for processing.
+
+http://127.0.0.1:8001/diagnose/live
+
+The URL of the live diagnosis endpoint.
+
+-H 'Content-Type: application/json'
+
+Tells the server that the request body contains JSON.
+
+-d
+
+Provides the request body.
+
+The JSON body is:
+
+{
+  "namespace": "payment-dev",
+  "pod_name": "oom-test"
+}
+
+The application uses these values to identify the Pod.
+
+
+------------------------------------------------------------
+9.2 What Did the API Return?
+------------------------------------------------------------
+
+The request succeeded.
+
+The response included these sections:
+
+evidence_source
+collected_evidence
+diagnosis
+
+The observed evidence summary was:
+
+evidence_source: live Kubernetes API
+
+namespace: payment-dev
+
+pod: oom-test
+
+pod_phase: Failed
+
+node: desktop-control-plane
+
+pod_ip: 10.244.0.10
+
+owner: null
+
+Container evidence:
+
+name: memory-hog
+
+ready: false
+
+restart_count: 0
+
+reason: OOMKilled
+
+exit_code: 137
+
+Container specification:
+
+image: python:3.12-alpine
+
+memory request: 16Mi
+
+memory limit: 32Mi
+
+Logs:
+
+No useful log content was returned.
+
+Diagnosis:
+
+The AI model identified the memory-related termination as the
+main finding and recommended additional investigation.
+
+NOTE:
+
+This is a summary of the observed response, not the complete raw
+JSON returned by the API.
+
+
+------------------------------------------------------------
+9.3 Explain the API Output
+------------------------------------------------------------
+
+evidence_source: live Kubernetes API
+
+This indicates that the application collected the evidence
+from the live Kubernetes API rather than relying only on
+manually supplied incident information.
+
+namespace: payment-dev
+
+This identifies the Kubernetes namespace.
+
+pod: oom-test
+
+This identifies the Pod being investigated.
+
+pod_phase: Failed
+
+Kubernetes reported that the Pod had failed.
+
+node: desktop-control-plane
+
+This identifies the node on which the Pod ran.
+
+owner: null
+
+No owner reference was found.
+
+In this test, the Pod was created directly rather than managed
+by a Deployment.
+
+reason: OOMKilled
+
+This is the key finding.
+
+Kubernetes reported that the container was terminated because
+of an out-of-memory condition.
+
+exit_code: 137
+
+The container exited with code 137.
+
+The code is consistent with SIGKILL termination. Combined with
+the explicit OOMKilled reason, it supports the OOM diagnosis.
+
+memory limit: 32Mi
+
+This is the configured memory limit.
+
+It does not tell us the exact peak memory usage.
+
+diagnosis:
+
+This is the AI-generated interpretation of the collected evidence.
+
+It helps explain the failure and suggests what to investigate next.
+
+IMPORTANT:
+
+The collected evidence and the AI-generated diagnosis are different.
+
+The evidence tells us what the application retrieved.
+
+The AI diagnosis explains what the model thinks the evidence means.
+
+
+------------------------------------------------------------
+9.4 What Does This Test Prove?
+------------------------------------------------------------
+
+The test demonstrated that:
+
+1. The FastAPI application was running.
+2. The endpoint accepted the request.
+3. The application accessed the Kubernetes API.
+4. The collector retrieved the requested Pod's information.
+5. The collector retrieved the OOMKilled termination reason.
+6. The collector retrieved exit code 137.
+7. The collector retrieved the configured resource limits.
+8. The application sent the evidence to the AI diagnosis engine.
+9. The endpoint returned the collected evidence and diagnosis.
+
+This is an end-to-end test of the live diagnosis workflow
+for the OOMKilled Pod.
+
+It does not prove that every possible Kubernetes failure is
+automatically detected or diagnosed correctly.
+
+
+============================================================
+10. UNDERSTANDING THE AI ENGINE
+============================================================
+
+FILE:
+
+app/diagnosis/ai_engine.py
+
+PURPOSE:
+
+The AI engine sends incident information to the configured
+OpenAI model and returns a structured analysis.
+
+Configured default model:
+
+gpt-4.1-mini
+
+The model can be changed using the OPENAI_MODEL environment variable.
+
+
+------------------------------------------------------------
+10.1 Why Use AI?
+------------------------------------------------------------
+
+Kubernetes returns structured information about resources.
+
+An engineer must interpret this information to understand
+the likely cause of a failure.
+
+The AI model helps organise the evidence into a readable diagnosis.
+
+For example, it can explain:
+
+- The Pod failed.
+- Kubernetes reported OOMKilled.
+- The configured memory limit was 32Mi.
+- The logs did not provide additional details.
+- Further memory metrics would help understand memory behaviour.
+
+The model should not invent information that was not supplied
+to it.
+
+The engineer must verify the diagnosis against the original evidence.
+
+
+------------------------------------------------------------
+10.2 Understanding the Diagnosis Fields
+------------------------------------------------------------
+
+The diagnosis is designed to contain fields such as:
+
+summary
+findings
+supporting_evidence
+missing_evidence
+recommended_checks
+proposed_yaml
+risks
+rollback_plan
+
+
+FIELD: summary
+
+Provides a short explanation of the incident.
+
+FIELD: findings
+
+Lists the main conclusions from the available evidence.
+
+FIELD: supporting_evidence
+
+Shows which evidence supports the conclusions.
+
+FIELD: missing_evidence
+
+Identifies information that would help confirm the diagnosis
+but was not available.
+
+FIELD: recommended_checks
+
+Lists additional investigations to perform.
+
+FIELD: proposed_yaml
+
+Provides a possible YAML configuration change when appropriate.
+
+FIELD: risks
+
+Explains potential risks associated with the proposed change.
+
+FIELD: rollback_plan
+
+Suggests how to reverse a change if it causes problems.
+
+
+IMPORTANT:
+
+A proposed YAML change is only a recommendation.
+
+The current application does not automatically apply the YAML
+to Kubernetes.
+
+An authorised engineer must review and approve any change.
+
+
+------------------------------------------------------------
+10.3 Facts Versus Hypotheses
+------------------------------------------------------------
+
+This distinction is essential in SRE work.
+
+FACT:
+
+Kubernetes reported the container termination reason as OOMKilled.
+
+This is directly supported by the collected evidence.
+
+HYPOTHESIS:
+
+The application may require more memory than the configured limit.
+
+This is plausible, but the exact memory requirement was not
+measured during the test.
+
+WHY DOES THIS DISTINCTION MATTER?
+
+If we increase a memory limit without investigating the actual
+memory behaviour, we may hide an underlying problem or increase
+resource consumption unnecessarily.
+
+A reliable diagnosis should identify:
+
+- What is confirmed.
+- What is suspected.
+- What evidence is missing.
+- What to investigate next.
+
+INTERVIEW ANSWER:
+
+"I separate confirmed facts from hypotheses. Kubernetes reported
+OOMKilled and exit code 137, but I did not collect historical
+memory metrics to establish the exact peak usage. I would check
+memory metrics and application behaviour before recommending
+a specific memory-limit increase."
+
+
+============================================================
+11. AUTOMATED TESTING
+============================================================
+
+11.1 Run the Test Suite
+
+COMMAND:
+
+python -m pytest -q
+
+ACTUAL OBSERVED RESULT:
+
+5 passed, 2 warnings
+
+
+OUTPUT EXPLANATION:
+
+5 passed
+
+Five automated tests completed successfully.
+
+This means the tests passed according to their defined assertions.
+
+2 warnings
+
+Two warnings were reported.
+
+They were FastAPI deprecation warnings related to the on_event
+lifecycle mechanism.
+
+A deprecation warning indicates that an API or feature is
+discouraged for future use and may eventually be removed.
+
+It does not necessarily mean the application has failed.
+
+WHY IS THIS TEST IMPORTANT?
+
+Automated tests help verify that existing functionality behaves
+as expected after code changes.
+
+IMPORTANT LIMITATION:
+
+Five passing tests do not prove that every feature or failure
+scenario has been tested.
+
+The live Kubernetes diagnosis request was also tested manually
+using curl.
+
+That manual test is separate from the automated test count.
+
+
+------------------------------------------------------------
+11.2 Check Python Syntax
+------------------------------------------------------------
+
+COMMAND:
+
+python -m py_compile app/main.py app/diagnosis/k8s_collector.py app/diagnosis/ai_engine.py
+
+OBSERVED RESULT:
+
+The command completed successfully without reporting syntax errors.
+
+
+OUTPUT EXPLANATION:
+
+python -m py_compile
+
+Asks Python to compile the specified source files.
+
+app/main.py
+
+Checks the main application module.
+
+app/diagnosis/k8s_collector.py
+
+Checks the Kubernetes evidence collector.
+
+app/diagnosis/ai_engine.py
+
+Checks the AI diagnosis engine.
+
+WHAT DOES SUCCESS MEAN?
+
+Python did not report syntax errors in the specified files.
+
+WHAT DOES IT NOT MEAN?
+
+It does not prove that every function will work correctly
+at runtime.
+
+The successful live diagnosis test provides additional evidence
+that the tested workflow ran successfully.
+
+
+============================================================
+12. IMPORTANT PROJECT FILES
+============================================================
+
+app/main.py
+
+Contains the FastAPI application and API endpoints.
+
+The live diagnosis endpoint is defined here.
+
+app/diagnosis/k8s_collector.py
+
+Collects information from the Kubernetes API.
+
+app/diagnosis/ai_engine.py
+
+Sends incident information to the OpenAI model and processes
+the resulting diagnosis.
+
+oom-test.yaml
+
+Defines the test Pod used to reproduce the OOM failure.
+
+requirements.txt
+
+Lists the Python dependencies required by the application.
+
+Dockerfile
+
+Defines how the application image is built.
+
+IMPORTANT:
+
+The local live diagnosis test used the Python virtual environment.
+Do not assume an existing Docker image contains the latest changes.
+
+
+============================================================
+13. PROJECT LIMITATIONS AND IMPROVEMENTS
+============================================================
+
+13.1 Only One Failure Type Was Confirmed End to End
+
+The live diagnosis workflow was verified against an OOMKilled Pod.
+
+Other failure scenarios require their own tests.
+
+13.2 No Automatic Remediation
+
+The application collects evidence and generates recommendations.
+
+It does not automatically restart workloads, increase limits,
+modify Deployments, or apply generated YAML.
+
+13.3 No Historical Peak Memory Measurement
+
+The test confirmed OOMKilled and a configured memory limit of 32Mi.
+
+It did not measure the exact peak memory usage at termination.
+
+13.4 Event Filtering Can Be Improved
+
+The current collector filters events by Pod name.
+
+Filtering by the current Pod UID would improve incident correlation.
+
+13.5 More Failure Scenarios Should Be Tested
+
+Future tests could cover scenarios such as:
+
+- Image pull failures.
+- CrashLoopBackOff.
+- Failed readiness probes.
+- Failed liveness probes.
+- Missing configuration.
+- Application startup failures.
+
+These are possible future test cases, not failures already
+verified by this project's current live diagnosis test.
+
+13.6 Security Needs Further Work
+
+The endpoint accepts a namespace and Pod name from the request.
+
+Before exposing it to a network or shared environment, the
+application needs appropriate:
+
+- Authentication.
+- Authorization.
+- Namespace restrictions.
+- Resource access restrictions.
+- Least-privilege Kubernetes RBAC.
+- Secure API key management.
+- Protection of potentially sensitive log information.
+
+Do not use cluster-admin permissions simply to make the
+collector work.
+
+
+============================================================
+14. INTERVIEW QUESTIONS AND ANSWERS
+============================================================
+
+QUESTION 1: What is AI SRE Copilot?
+
+ANSWER:
+
+"AI SRE Copilot is a Python and FastAPI application that assists
+with Kubernetes incident investigation. It collects live evidence,
+including Pod status, container termination details, resource
+configuration, events, and logs. It sends the evidence to an AI
+model, which returns a structured diagnosis and recommended checks.
+The current implementation assists with diagnosis but does not
+automatically remediate incidents."
+
+
+------------------------------------------------------------
+QUESTION 2: What problem does it solve?
+
+ANSWER:
+
+"During incident investigation, engineers often need to execute
+several Kubernetes commands and interpret the results manually.
+The application collects some of this evidence in one workflow
+and uses AI to help organise it into a readable diagnosis."
+
+
+------------------------------------------------------------
+QUESTION 3: What failure did you reproduce?
+
+ANSWER:
+
+"I created a Pod called oom-test that intentionally allocated
+increasing amounts of memory. I configured a memory request of
+16Mi and a memory limit of 32Mi. Kubernetes reported OOMKilled
+and exit code 137."
+
+
+------------------------------------------------------------
+QUESTION 4: How did you confirm the failure?
+
+ANSWER:
+
+"I checked the Pod status and inspected the detailed Pod information.
+The container termination reason was OOMKilled, and the exit code
+was 137. The Pod configuration showed a memory limit of 32Mi.
+These findings supported the conclusion that the container
+experienced an out-of-memory termination."
+
+
+------------------------------------------------------------
+QUESTION 5: Why were the logs empty?
+
+ANSWER:
+
+"No useful log content was available. I therefore relied on
+the Kubernetes termination state and resource configuration
+rather than assuming that empty logs meant there was no failure."
+
+
+------------------------------------------------------------
+QUESTION 6: How does the application communicate with Kubernetes?
+
+ANSWER:
+
+"It uses the Kubernetes Python Client. The collector attempts
+to load in-cluster configuration and falls back to local kubeconfig
+when that configuration is unavailable. It then queries the
+Kubernetes API for the requested Pod's information."
+
+
+------------------------------------------------------------
+QUESTION 7: What does the live endpoint do?
+
+ANSWER:
+
+"The POST /diagnose/live endpoint accepts a namespace and Pod name.
+It collects evidence from Kubernetes, constructs an incident object,
+sends the evidence to the AI diagnosis engine, and returns both
+the collected evidence and the generated diagnosis."
+
+
+------------------------------------------------------------
+QUESTION 8: Why use AI?
+
+ANSWER:
+
+"Python rules can identify known conditions, such as an OOMKilled
+termination. AI can help explain several pieces of evidence together
+and produce a structured summary. However, I keep the collected
+evidence separate from the AI interpretation because the model
+can make mistakes."
+
+
+------------------------------------------------------------
+QUESTION 9: Does the application automatically fix incidents?
+
+ANSWER:
+
+"No. The current implementation is read-only with respect to
+Kubernetes. It collects evidence and returns recommendations.
+Any configuration change must be reviewed and applied separately
+by an authorised engineer."
+
+
+------------------------------------------------------------
+QUESTION 10: How did you test it?
+
+ANSWER:
+
+"I ran the automated test suite, which completed with five passing
+tests and two deprecation warnings. I also checked Python syntax
+using py_compile and manually tested the live diagnosis endpoint
+with curl against the oom-test Pod. The endpoint successfully
+returned live Kubernetes evidence and an AI-generated diagnosis."
+
+
+------------------------------------------------------------
+QUESTION 11: What would you improve?
+
+ANSWER:
+
+"I would improve event filtering by using the Pod UID, add more
+automated tests for different failure scenarios, integrate
+historical metrics where available, and strengthen authentication
+and RBAC. I would also evaluate diagnosis quality against known
+test cases before considering any approval-controlled remediation."
+
+
+============================================================
+15. IMPORTANT COMMANDS TO REMEMBER
+============================================================
+
+Check the active context:
+
+kubectl config current-context
+
+Expected observed value in this environment:
+
+docker-desktop
+
+
+List nodes:
+
+kubectl get nodes
+
+
+List Pods:
+
+kubectl get pods -n payment-dev
+
+
+Check the test Pod:
+
+kubectl get pod oom-test -n payment-dev
+
+
+Inspect detailed Pod information:
+
+kubectl describe pod oom-test -n payment-dev
+
+
+Read container logs:
+
+kubectl logs oom-test -n payment-dev
+
+
+List namespace events:
+
+kubectl get events -n payment-dev
+
+
+Filter events by Pod name:
+
+kubectl get events -n payment-dev --field-selector involvedObject.name=oom-test
+
+
+Apply the test configuration:
+
+kubectl apply -f oom-test.yaml
+
+
+Start the local application:
+
+uvicorn app.main:app --host 127.0.0.1 --port 8001
+
+
+Run automated tests:
+
+python -m pytest -q
+
+
+Check Python syntax:
+
+python -m py_compile app/main.py app/diagnosis/k8s_collector.py app/diagnosis/ai_engine.py
+
+
+Test live diagnosis:
+
+curl -sS -X POST http://127.0.0.1:8001/diagnose/live \
+  -H 'Content-Type: application/json' \
+  -d '{"namespace":"payment-dev","pod_name":"oom-test"}'
+
+
+============================================================
+16. FINAL PROJECT SUMMARY
+============================================================
+
+Project:
+AI SRE Copilot
+
+Purpose:
+Assist with Kubernetes incident investigation using live evidence
+and AI-generated analysis.
+
+Programming language:
+Python
+
+API framework:
+FastAPI
+
+Kubernetes integration:
+Kubernetes Python Client
+
+AI integration:
+OpenAI API
+
+Test environment:
+Docker Desktop Kubernetes
+
+Namespace:
+payment-dev
+
+Baseline workload:
+payment-service using nginx:1.27 with three replicas
+
+Failure reproduced:
+An intentionally memory-intensive Pod was terminated with OOMKilled.
+
+Observed exit code:
+137
+
+Configured memory request:
+16Mi
+
+Configured memory limit:
+32Mi
+
+Live diagnosis endpoint:
+POST /diagnose/live
+
+Automated tests:
+5 passed, 2 deprecation warnings
+
+Syntax validation:
+Completed successfully for the checked files.
+
+Live diagnosis:
+Successfully collected Kubernetes evidence and returned an
+AI-generated diagnosis for the oom-test Pod.
+
+Automatic remediation:
+Not implemented.
+
+MOST IMPORTANT LESSON:
+
+A good incident diagnosis must distinguish confirmed facts from
+hypotheses.
+
+Kubernetes reported OOMKilled and exit code 137.
+
+The configured memory limit was 32Mi.
+
+The exact peak memory usage was not measured.
+
+Therefore, the correct engineering approach is to use the confirmed
+evidence, investigate the missing information, and review any
+proposed fix before applying it.
+
+That is the foundation of a reliable AI-assisted SRE workflow.
 
    
 
