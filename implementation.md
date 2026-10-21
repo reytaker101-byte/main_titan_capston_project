@@ -2002,6 +2002,270 @@ CONTAINER ID   IMAGE          COMMAND                  CREATED       STATUS     
 (.venv) admin@NewLearning#docker inspect ai-sre-copilot-test --format 'Image={{.Config.Image}} | Ports={{json .HostConfig.PortBindings}} | Restart={{.HostConfig.RestartPolicy.Name}}'
 Image=ai-sre-copilot:dev | Ports={"8000/tcp":[{"HostIp":"","HostPort":"8000"}]} | Restart=no
 
+(.venv) admin@NewLearning#docker tag ai-sre-copilot:debug ai-sre-copilot:dev
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#docker exec ai-sre-copilot-test sh -c 'if [ -f /app/data/incidents.db ]; then ls -lh /app/data/incidents.db; else echo "No incidents database found"; fi'
+-rw-r--r-- 1 appuser appuser 12K Oct 21 03:52 /app/data/incidents.db
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#mkdir -p ~/ai-sre-copilot-backup && docker cp ai-sre-copilot-test:/app/data/incidents.db ~/ai-sre-copilot-backup/incidents.db && ls -lh ~/ai-sre-copilot-backup/incidents.db
+Successfully copied 13.8kB to /Users/dollyd/ai-sre-copilot-backup/incidents.db
+-rw-r--r--@ 1 dollyd  staff    12K 21 Oct 09:22 /Users/dollyd/ai-sre-copilot-backup/incidents.db
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#docker stop ai-sre-copilot-test
+ai-sre-copilot-test
+(.venv) admin@NewLearning#
+
+.venv) admin@NewLearning#docker rm ai-sre-copilot-test && docker run -d --name ai-sre-copilot-test -p 8000:8000 --restart=no -v "$HOME/ai-sre-copilot-backup:/backup:ro" ai-sre-copilot:dev
+ai-sre-copilot-test
+38197b432aacbc98d40fd217ab16e3f1c2ab486320814c650684c440b8aecb5a
+
+(.venv) admin@NewLearning#echo "----- Container status -----" && docker ps --filter "name=ai-sre-copilot-test" && echo "----- Health endpoint -----" && curl -sS http://127.0.0.1:8000/health && echo && echo "----- Diagnose route -----" && curl -sS http://127.0.0.1:8000/openapi.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print("POST /diagnose:", "POST" in d["paths"].get("/diagnose", {}))'
+----- Container status -----
+CONTAINER ID   IMAGE                COMMAND                  CREATED          STATUS          PORTS                                         NAMES
+38197b432aac   ai-sre-copilot:dev   "uvicorn app.main:ap…"   42 seconds ago   Up 41 seconds   0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp   ai-sre-copilot-test
+----- Health endpoint -----
+{"status":"ok","service":"ai-sre-copilot"}
+----- Diagnose route -----
+POST /diagnose: False
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#echo "----- Application logs -----" && docker logs --tail 80 ai-sre-copilot-test 2>&1 && echo "----- Diagnose route in running app -----" && docker exec ai-sre-copilot-test sh -c 'grep -nE "diagnose|DiagnosisRequest" /app/app/main.py'
+----- Application logs -----
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     192.168.65.1:50433 - "GET /health HTTP/1.1" 200 OK
+INFO:     192.168.65.1:19352 - "GET /openapi.json HTTP/1.1" 200 OK
+----- Diagnose route in running app -----
+171:from app.diagnosis.ai_engine import diagnose_with_ai
+174:class DiagnosisRequest(BaseModel):
+186:@app.post("/diagnose")
+187:def diagnose_endpoint(request: DiagnosisRequest):
+191:        return diagnose_with_ai(request.model_dump())
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#curl -sS http://127.0.0.1:8000/openapi.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d["paths"].get("/diagnose", "ROUTE NOT IN OPENAPI"), indent=2))'
+{
+  "post": {
+    "summary": "Diagnose Endpoint",
+    "operationId": "diagnose_endpoint_diagnose_post",
+    "requestBody": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/DiagnosisRequest"
+          }
+        }
+      },
+      "required": true
+    },
+    "responses": {
+      "200": {
+        "description": "Successful Response",
+        "content": {
+          "application/json": {
+            "schema": {}
+          }
+        }
+      },
+      "422": {
+        "description": "Validation Error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HTTPValidationError"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#curl -sS -o /tmp/diagnose-validation.json -w 'HTTP Status: %{http_code}\n' -X POST http://127.0.0.1:8000/diagnose -H 'Content-Type: application/json' -d '{}'
+HTTP Status: 422
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#docker exec ai-sre-copilot-test sh -c 'if [ -n "$OPENAI_API_KEY" ]; then echo "API key is configured"; else echo "API key is missing"; fi'
+API key is missing
+(.venv) admin@NewLearning#if [ -n "$OPENAI_API_KEY" ]; then
+  echo "Host API key is configured"
+else
+  echo "Host API key is missing"
+fi
+Host API key is configured
+
+(.venv) admin@NewLearning#docker stop ai-sre-copilot-test
+ai-sre-copilot-test
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#docker rm ai-sre-copilot-test && docker run -d --name ai-sre-copilot-test -p 8000:8000 --restart=no -e OPENAI_API_KEY -v "$HOME/ai-sre-copilot-backup:/backup:ro" ai-sre-copilot:dev
+ai-sre-copilot-test
+5763c504b51d4b2daf6137795bcdc71596439e7429eb20fc3e68489487651286
+
+(.venv) admin@NewLearning#docker exec ai-sre-copilot-test sh -c 'if [ -n "$OPENAI_API_KEY" ]; then echo "API key configured inside container"; else echo "API key missing inside container"; fi'
+API key configured inside container
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#docker exec ai-sre-copilot-test sh -c 'if [ -n "$OPENAI_API_KEY" ]; then echo "API key configured inside container"; else echo "API key missing inside container"; fi'
+API key configured inside container
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#curl -sS -w '\nHTTP Status: %{http_code}\n' \
+  -X POST http://127.0.0.1:8000/diagnose \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "incident_id": "prod-payment-incident-001",
+    "title": "Payment service pods repeatedly restarting",
+    "namespace": "payment-prod",
+    "resource_name": "payment-service",
+    "container_name": "payment-service",
+    "evidence": [
+      "Container restart count increased sharply over 10 minutes",
+      "Deployment desired replicas: 3; ready replicas: 1",
+      "Last terminated container exit code: 1",
+      "Container memory usage: 230Mi; configured memory limit: 256Mi",
+      "Recent deployment changed database connection configuration",
+      "This is synthetic test evidence, not verified live-cluster data"
+    ],
+    "logs": [
+      "ERROR: database connection initialization failed",
+      "FATAL: application startup aborted",
+      "Container exited with code 1"
+    ],
+    "events": [
+      {
+        "type": "Warning",
+        "reason": "BackOff",
+        "message": "Back-off restarting failed container"
+      }
+    ],
+    "metrics": {
+      "desired_replicas": 3,
+      "ready_replicas": 1,
+      "memory_usage_mi": 230,
+      "memory_limit_mi": 256
+    }
+  }'
+{"summary":"The payment service pods in the payment-prod namespace are repeatedly restarting with only 1 of 3 desired replicas ready. The pods are exiting with code 1 shortly after startup, accompanied by errors indicating database connection initialization failure following a recent deployment update to database connection configuration. The observed symptoms and logs strongly suggest that the root cause is a misconfiguration or failure in database connectivity post-deployment.","findings":[{"observation":"Pods restarting frequently with exit code 1","supported_by":["Container restart count increased sharply over 10 minutes","Last terminated container exit code: 1","Container exited with code 1","Warning event: BackOff restarting failed container"],"confidence":"high","notes":"Exit code 1 is a generic error indicating a failure during container startup or runtime, supported by restart back-off warnings."},{"observation":"Only 1 of 3 desired replicas are ready","supported_by":["Deployment desired replicas: 3; ready replicas: 1","Metrics showing desired_replicas: 3 and ready_replicas: 1"],"confidence":"high","notes":"Pod readiness is degraded due to repeated failures."},{"hypothesis":"Database connectivity failure caused pod startup failure","supported_by":["ERROR: database connection initialization failed","FATAL: application startup aborted","Recent deployment changed database connection configuration"],"confidence":"high","notes":"The application explicitly logs failures initializing the database connection immediately followed by startup abort, coinciding with a recent deployment changing DB connection settings."},{"hypothesis":"Out of memory issues unlikely","supported_by":["Container memory usage: 230Mi","Configured memory limit: 256Mi"],"confidence":"medium","notes":"Memory usage is close to but below the configured limit, no evidence of OOM kills or memory errors present in logs or events."}],"supporting_evidence":["Container restart count spiked sharply within 10 minutes","Only 1 of 3 desired replicas is ready, indicating failing pods","Exit code of 1 from containers aligns with startup failure","Error logs showing database connection initialization failure and fatal startup abort","Warning events reporting back-off due to container restart failures","Recent deployment changed database connection configuration, temporally preceding failures"],"missing_evidence":["Specific error messages or stack traces from within the database connection attempt","Database availability and connectivity checks from network and credentials standpoint","Pod logs before recent deployment to compare change impact","Detailed pod readiness probe and liveness probe statuses and events","Events or logs showing OOM kills or resource constraint failures","Configuration details of the database connection parameters after deployment"],"recommended_checks":["Verify database service health and network connectivity from pods (e.g., DNS resolution, port accessibility)","Review recent deployment changes for correctness in database connection parameters and secrets","Check pod startup logs including environment variables and config maps loaded","Confirm pod liveness/readiness probe configurations are correct and not prematurely causing restarts","Check for underlying infrastructure issues affecting database availability","Test database credentials and connectivity independently of application pods"],"proposed_yaml":null,"risks":["Applying configuration changes without validating database connection parameters may exacerbate downtime.","Rolling back deployment may cause temporary inconsistencies if new features are involved.","Making resource limit changes without confirming cause may mask rather than fix the root problem."],"rollback_plan":"Roll back to the last known good deployment revision prior to the database connection configuration change to restore stable pod startups and full replica availability while investigating DB connectivity issues."}
+HTTP Status: 200
+(.venv) admin@NewLearning#
+
+ First actual AI diagnosis successful — HTTP 200 OK!
+
+Tumhara AI SRE Copilot ab OpenAI API se response le raha hai. Abhi humne ek production-style incident simulate kiya, live production system access nahi kiya.
+
+1. AI ne kya diagnose kiya?
+
+Incident: Payment service ke pods baar-baar restart ho rahe hain.
+Observation
+
+Result
+
+Desired replicas
+
+3
+
+Ready replicas
+
+1
+
+Container exit code
+
+1
+
+Memory usage
+
+230 MiB / 256 MiB
+
+Database logs
+
+Connection initialization failed
+
+Kubernetes event
+
+BackOff
+
+2. AI ka root-cause analysis
+
+Primary hypothesis: Database connection configuration issue.
+
+Recent deployment mein database connection configuration badli thi. Uske baad logs mein:
+
+* database connection initialization failed
+* application startup aborted
+
+AI ne database connectivity ko high confidence diya. Yeh evidence ke saath reasonable hypothesis hai, lekin live environment mein abhi verify nahi hua.
+
+Memory usage limit ke kareeb hai, lekin available evidence OOM kill confirm nahi karta.
+
+3. Kya AI ne production-ready fix diya?
+
+Abhi nahi.
+
+AI ne:
+
+* Missing evidence identify kiya.
+* Database connectivity aur configuration verify karne ko kaha.
+* Previous known-good deployment par rollback consider karne ko suggest kiya.
+* proposed_yaml: null return kiya, kyunki YAML change justify karne ke liye sufficient evidence nahi tha.
+
+Yeh actually achha behaviour hai: AI ne bina sufficient evidence ke Kubernetes YAML patch invent nahi kiya.
+
+4. Current status
+
+   Capability
+
+Status
+
+FastAPI application
+
+✅ Working
+
+Docker deployment
+
+✅ Working locally
+
+OpenAI API integration
+
+✅ Tested successfully
+
+Evidence-based incident analysis
+
+✅ Initial test passed
+
+Live Kubernetes/Prometheus integration
+
+❌ Not implemented
+
+Automatic GitHub PR generation
+
+❌ Not implemented
+
+CI validation and Argo CD workflow
+
+❌ Not implemented
+
+Production security and authentication
+
+❌ Not implemented
+
+5. Ab next kya karna chahiye?
+
+Meri recommendation: ek real operational workflow ka next component implement karein — Kubernetes evidence collection.
+
+Flow kuch aisa hoga:
+
+Alert → Collect pod status, events and logs → AI diagnosis → Human review
+
+Isse AI sirf manually supplied evidence par depend nahi karega. Lekin pehle local implementation aur mocked tests karenge; abhi GCP cluster create karne ya production credentials dene ki zaroorat nahi hai.
+
+Important: Abhi code commit/push mat karna. Pehle evidence collector aur uske tests implement karke validate karenge.
 
 
 
