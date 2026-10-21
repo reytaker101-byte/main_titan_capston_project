@@ -348,6 +348,41 @@ Example:
 7. Approval aur merge ke baad Argo CD deployment karega.
 8. Deployment fail ho toh rollback recommendation dega.
 
+LOCAL TEST
+Is ZIP mein ai-sre-copilot/ folder hai, jise tumhare repository root mein rakhna hai.
+
+Step 2 — Ismein kya files hain?
+
+<img width="888" height="718" alt="image" src="https://github.com/user-attachments/assets/ffaeaed0-2f69-4270-8c74-dded533c8fea" />
+
+Important: ZIP mein ai/ folder ko touch nahi kiya hai. Existing repo ki GitHub Actions workflows bhi change nahi hongi.
+
+Step 3 — Abhi kya functional hoga?
+
+* Incident create aur retrieve karna.
+* SQLite mein incidents persist karna.
+* Incident approval, rejection aur hold status record karna.
+* Health endpoint check karna.
+* Docker image build karne ke liye initial setup.
+
+Abhi AI diagnosis, Kubernetes monitoring, GitHub PR creation aur Argo CD deployment implemented nahi hain. Yeh agle phases honge.
+
+Step 4 — Testing aur cost control
+
+Hum yeh sequence follow karenge:
+
+1. ZIP extract karke repository mein files add karna.
+2. Minimum local tests run karna.
+3. Docker image build test karna, agar Docker available hai.
+4. GitHub par code push karna.
+5. Uske baad GCP cluster setup karna.
+6. Kubernetes, monitoring aur AI integrations ek-ek karke add karna.
+
+Abhi GCP par kuch create mat karna. Cluster ki zaroorat minimum local tests ke liye nahi hai.
+
+
+
+
    
 
 
