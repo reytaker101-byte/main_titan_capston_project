@@ -595,6 +595,40 @@ Docker version 29.3.1, build c2be9ccfc3
 View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/ikj9lnnor98si3byfofvrp8bh
 (.venv) admin@NewLearning#
 
+(.venv) admin@NewLearning#docker run -d --name ai-sre-copilot-test -p 8000:8000 ai-sre-copilot:dev
+548d9ec6508904a17d7ad666c4edd60bdbb81304e90199ee02282e1bf7b65855
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#curl http://localhost:8000/health
+curl: (7) Failed to connect to localhost port 8000 after 0 ms: Couldn't connect to server
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#docker logs ai-sre-copilot-test
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+ERROR:    Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/starlette/routing.py", line 656, in lifespan
+    async with self.lifespan_context(app) as maybe_state:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 273, in __aenter__
+    await self._router._startup()
+  File "/usr/local/lib/python3.12/site-packages/fastapi/routing.py", line 6482, in _startup
+    handler()
+  File "/app/app/main.py", line 85, in startup
+    init_db()
+  File "/app/app/main.py", line 62, in init_db
+    with closing(connect_db()) as conn:
+                 ^^^^^^^^^^^^
+  File "/app/app/main.py", line 55, in connect_db
+    path.parent.mkdir(parents=True, exist_ok=True)
+  File "/usr/local/lib/python3.12/pathlib.py", line 1311, in mkdir
+    os.mkdir(self, mode)
+PermissionError: [Errno 13] Permission denied: 'data'
+
+ERROR:    Application startup failed. Exiting.
+(.venv) admin@NewLearning#
+
 
 
 
