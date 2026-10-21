@@ -1114,6 +1114,443 @@ def diagnose_endpoint(request: DiagnosisRequest):
 PY
 (.venv) admin@NewLearning#
 
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && python -m pytest -q
+....                                                    [100%]
+====================== warnings summary =======================
+app/main.py:83
+  /Users/dollyd/main_titan_capston_project/ai-sre-copilot/app/main.py:83: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+.venv/lib/python3.14/site-packages/fastapi/applications.py:4723
+  /Users/dollyd/main_titan_capston_project/ai-sre-copilot/.venv/lib/python3.14/site-packages/fastapi/applications.py:4723: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+4 passed, 2 warnings in 0.59s
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && cat > tests/test_ai_diagnosis.py <<'PY'
+from fastapi.testclient import TestClient
+from app.main import app
+from app.diagnosis import ai_engine
+
+client = TestClient(app)
+
+
+def test_diagnose_endpoint_uses_ai_result(monkeypatch):
+    expected = {
+        "summary": "Multiple issues identified",
+        "findings": [
+            {
+                "cause": "Example cause",
+                "confidence": "medium",
+                "reasoning": "Mocked test response"
+            }
+        ],
+        "supporting_evidence": ["Sample evidence"],
+        "missing_evidence": [],
+        "recommended_checks": ["Collect additional metrics"],
+        "proposed_yaml": None,
+        "risks": ["No changes have been applied"],
+        "rollback_plan": "No rollback required"
+    }
+
+    def fake_diagnose(incident):
+        assert incident["namespace"] == "payment-dev"
+        assert incident["evidence"] == ["Sample test evidence"] 
+        return expected
+
+    monkeypatch.setattr(ai_engine, "diagnose_with_ai", fake_diagnose)
+
+    response = client.post("/diagnose", json={
+        "title": "Sample payment incident",
+        "namespace": "payment-dev",
+        "resource_name": "payment-service-green",
+        "container_name": "payment-service",
+        "evidence": ["Sample test evidence"]
+    })
+
+    assert response.status_code == 200
+    assert response.json() == expected
+PY
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && python -m pytest -q
+F....                                                   [100%]
+========================== FAILURES ===========================
+____________ test_diagnose_endpoint_uses_ai_result ____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107323ce0>
+
+    def test_diagnose_endpoint_uses_ai_result(monkeypatch):
+        expected = {
+            "summary": "Multiple issues identified",
+            "findings": [
+                {
+                    "cause": "Example cause",
+                    "confidence": "medium",
+                    "reasoning": "Mocked test response"
+                }
+            ],
+            "supporting_evidence": ["Sample evidence"],
+            "missing_evidence": [],
+            "recommended_checks": ["Collect additional metrics"],
+            "proposed_yaml": None,
+            "risks": ["No changes have been applied"],
+            "rollback_plan": "No rollback required"
+        }
+    
+        def fake_diagnose(incident):
+            assert incident["namespace"] == "payment-dev"
+            assert incident["evidence"] == ["Sample test evidence"]
+            return expected
+    
+        monkeypatch.setattr(ai_engine, "diagnose_with_ai", fake_diagnose)
+    
+        response = client.post("/diagnose", json={
+            "title": "Sample payment incident",
+            "namespace": "payment-dev",
+            "resource_name": "payment-service-green",
+            "container_name": "payment-service",
+            "evidence": ["Sample test evidence"]
+        })
+    
+        assert response.status_code == 200
+>       assert response.json() == expected
+E       AssertionError: assert {'summary': '...t', ...], ...} == {'summary': '...nce': [], ...}
+E         
+E         Omitting 1 identical items, use -vv to show
+E         Differing items:
+E         {'recommended_checks': ['Collect and analyze pod status and Kubernetes events for payment-service-green', 'Retrieve lo...ting the payment-service-green', 'Verify network connectivity and service endpoints related to payment-service-green']} != {'recommended_checks...
+E         
+E         ...Full output truncated (8 lines hidden), use '-vv' to show
+
+tests/test_ai_diagnosis.py:42: AssertionError
+====================== warnings summary =======================
+app/main.py:83
+  /Users/dollyd/main_titan_capston_project/ai-sre-copilot/app/main.py:83: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+.venv/lib/python3.14/site-packages/fastapi/applications.py:4723
+  /Users/dollyd/main_titan_capston_project/ai-sre-copilot/.venv/lib/python3.14/site-packages/fastapi/applications.py:4723: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=================== short test summary info ===================
+FAILED tests/test_ai_diagnosis.py::test_diagnose_endpoint_uses_ai_result - AssertionError: assert {'summary': '...t', ...], ...} == {...
+1 failed, 4 passed, 2 warnings in 6.62s
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#grep -nE 'def diagnose|@app.post\("/diagnose"\)|diagnose_with_ai|recommended_checks' app/main.py
+171:from app.diagnosis.ai_engine import diagnose_with_ai
+186:@app.post("/diagnose")
+187:def diagnose_endpoint(request: DiagnosisRequest):
+191:        return diagnose_with_ai(request.model_dump())
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#grep -nE 'def diagnose|@app.post\("/diagnose"\)|diagnose_with_ai|recommended_checks' app/main.py
+171:from app.diagnosis.ai_engine import diagnose_with_ai
+186:@app.post("/diagnose")
+187:def diagnose_endpoint(request: DiagnosisRequest):
+191:        return diagnose_with_ai(request.model_dump())
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#sed -n '150,205p' app/main.py && echo "----- AI ENGINE -----" && sed -n '1,220p' app/diagnosis/ai_engine.py
+    with closing(connect_db()) as conn:
+        row = conn.execute(
+            "SELECT * FROM incidents WHERE incident_id = ?", (incident_id,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        if row["status"] != ApprovalStatus.PENDING.value:
+            raise HTTPException(
+                status_code=409, detail=f"Incident already reviewed: {row['status']}"
+            )
+        conn.execute(
+            "UPDATE incidents SET status = ?, reviewer_note = ? WHERE incident_id = ?",
+            (review.decision.value, review.reviewer_note, incident_id),
+        )
+        conn.commit()
+        updated = conn.execute(
+            "SELECT * FROM incidents WHERE incident_id = ?", (incident_id,)
+        ).fetchone()
+    return row_to_record(updated)
+
+
+from app.diagnosis.ai_engine import diagnose_with_ai
+
+
+class DiagnosisRequest(BaseModel):
+    incident_id: str | None = None
+    title: str
+    namespace: str
+    resource_name: str
+    container_name: str
+    evidence: list[str] = Field(default_factory=list)
+    logs: list[str] = Field(default_factory=list)
+    events: list[dict] = Field(default_factory=list)
+    metrics: dict = Field(default_factory=dict)
+
+
+@app.post("/diagnose")
+def diagnose_endpoint(request: DiagnosisRequest):
+    from fastapi import HTTPException
+
+    try:
+        return diagnose_with_ai(request.model_dump())
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    except Exception:
+        raise HTTPException(
+            status_code=502,
+            detail="AI diagnosis request failed. Check server logs and API configuration.",
+        )
+----- AI ENGINE -----
+import json
+import os
+
+from openai import OpenAI
+
+
+SYSTEM_PROMPT = """
+You are an experienced Site Reliability Engineering (SRE) incident analyst.
+
+Analyze the incident evidence provided by the caller. Do not assume the cause
+is known in advance and do not limit your analysis to a predefined issue list.
+
+Requirements:
+- Identify one or more plausible root causes supported by the evidence.
+- Separate confirmed observations from hypotheses.
+- Cite the exact evidence supporting each hypothesis.
+- State confidence and explain uncertainty.
+- Identify conflicting signals and missing evidence.
+- Recommend the next diagnostic checks when evidence is insufficient.
+- Suggest a minimal Kubernetes YAML patch only when evidence supports it.
+- Never invent cluster names, resources, metrics, logs, or events.
+- Never claim that you queried a live cluster or applied a change.
+- Include risks and a rollback recommendation.
+- Do not execute commands or deploy changes.
+
+Return a JSON object with:
+summary, findings, supporting_evidence, missing_evidence,
+recommended_checks, proposed_yaml, risks, rollback_plan.
+"""
+
+
+def diagnose_with_ai(incident: dict) -> dict:
+    if not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+
+    client = OpenAI()
+
+    response = client.responses.create(
+        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        instructions=SYSTEM_PROMPT,
+        input=json.dumps(incident),
+    )
+
+    try:
+        result = json.loads(response.output_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("AI returned an invalid JSON response") from exc
+
+    if not isinstance(result, dict):
+        raise RuntimeError("AI response must be a JSON object")
+
+    return result
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#sed -n '1,180p' tests/test_ai_diagnosis.py && echo "----- EXISTING DIAGNOSIS ENGINE -----" && sed -n '1,240p' app/diagnosis/engine.py
+from fastapi.testclient import TestClient
+from app.main import app
+from app.diagnosis import ai_engine
+
+client = TestClient(app)
+
+
+def test_diagnose_endpoint_uses_ai_result(monkeypatch):
+    expected = {
+        "summary": "Multiple issues identified",
+        "findings": [
+            {
+                "cause": "Example cause",
+                "confidence": "medium",
+                "reasoning": "Mocked test response"
+            }
+        ],
+        "supporting_evidence": ["Sample evidence"],
+        "missing_evidence": [],
+        "recommended_checks": ["Collect additional metrics"],
+        "proposed_yaml": None,
+        "risks": ["No changes have been applied"],
+        "rollback_plan": "No rollback required"
+    }
+
+    def fake_diagnose(incident):
+        assert incident["namespace"] == "payment-dev"
+        assert incident["evidence"] == ["Sample test evidence"]
+        return expected
+
+    monkeypatch.setattr(ai_engine, "diagnose_with_ai", fake_diagnose)
+
+    response = client.post("/diagnose", json={
+        "title": "Sample payment incident",
+        "namespace": "payment-dev",
+        "resource_name": "payment-service-green",
+        "container_name": "payment-service",
+        "evidence": ["Sample test evidence"]
+    })
+
+    assert response.status_code == 200
+    assert response.json() == expected
+----- EXISTING DIAGNOSIS ENGINE -----
+from typing import Any
+
+
+def diagnose(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Analyze supplied Kubernetes event samples.
+    Only report causes supported by the supplied evidence.
+    This function does not connect to or modify a cluster.
+    """
+    if not events:
+        return {
+            "diagnosis": "Insufficient evidence",
+            "confidence": "low",
+            "evidence": [],
+            "recommended_action": "Collect pod events, container logs, and resource metrics.",
+            "proposed_yaml": None,
+            "risk": "Changing resources without evidence may not resolve the incident.",
+            "rollback_plan": "No change has been made; no rollback is required.",
+        }
+
+    evidence = [str(event.get("message", "")) for event in events]
+    combined = " ".join(evidence).lower()
+
+    if any(term in combined for term in ["oomkilled", "out of memory", "reason: oom"]):
+        return {
+            "diagnosis": "Container likely exceeded its memory limit",
+            "confidence": "medium",
+            "evidence": evidence,
+            "recommended_action": (
+                "Verify the container's last termination reason and memory usage "
+                "before changing its memory limit."
+            ),
+            "proposed_yaml": None,
+            "risk": (
+                "Increasing memory limits without checking actual usage may "
+                "increase resource consumption and still not fix the cause."
+            ),
+            "rollback_plan": (
+                "If a later approved change causes issues, revert its Git commit "
+                "and verify Argo CD sync."
+            ),
+        }
+
+    if any(term in combined for term in ["failedscheduling", "insufficient cpu", "insufficient memory"]):
+        return {
+            "diagnosis": "Pod scheduling may be blocked by insufficient cluster resources",
+            "confidence": "medium",
+            "evidence": evidence,
+            "recommended_action": (
+                "Check node allocatable capacity, pod requests, and scheduler events."
+            ),
+            "proposed_yaml": None,
+            "risk": (
+                "Reducing requests without capacity analysis can cause performance "
+                "degradation; increasing them may make scheduling harder."
+            ),
+            "rollback_plan": (
+                "If a later approved change causes issues, revert its Git commit "
+                "and verify Argo CD sync."
+            ),
+        }
+
+    if any(term in combined for term in ["back-off restarting failed container", "crashloopbackoff"]):
+        return {
+            "diagnosis": "Container is repeatedly failing; root cause is not established",
+            "confidence": "low",
+            "evidence": evidence,
+            "recommended_action": (
+                "Inspect previous container logs, termination exit code, and pod events."
+            ),
+            "proposed_yaml": None,
+            "risk": (
+                "Changing CPU or memory settings without the termination details "
+                "may not resolve the failure."
+            ),
+            "rollback_plan": (
+                "No change has been made; if a later approved change is applied, "
+                "revert its Git commit and verify Argo CD sync."
+            ),
+        }
+
+    return {
+        "diagnosis": "No supported root cause identified",
+        "confidence": "low",
+        "evidence": evidence,
+        "recommended_action": (
+            "Collect relevant pod events, previous container logs, and resource metrics."
+        ),
+        "proposed_yaml": None,
+        "risk": "Evidence is insufficient to recommend a specific configuration change.",
+        "rollback_plan": "No change has been made; no rollback is required.",
+    }
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#sed -i '' 's/monkeypatch.setattr(ai_engine, "diagnose_with_ai", fake_diagnose)/monkeypatch.setattr("app.main.diagnose_with_ai", fake_diagnose)/' tests/test_ai_diagnosis.py
+(.venv) admin@NewLearning#grep -n 'monkeypatch.setattr' tests/test_ai_diagnosis.py
+python -m pytest -q
+31:    monkeypatch.setattr("app.main.diagnose_with_ai", fake_diagnose)
+.....                                                   [100%]
+====================== warnings summary =======================
+app/main.py:83
+  /Users/dollyd/main_titan_capston_project/ai-sre-copilot/app/main.py:83: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+.venv/lib/python3.14/site-packages/fastapi/applications.py:4723
+  /Users/dollyd/main_titan_capston_project/ai-sre-copilot/.venv/lib/python3.14/site-packages/fastapi/applications.py:4723: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+5 passed, 2 warnings in 0.61s
+(.venv) admin@NewLearning#
+
+
+
 
 
 
