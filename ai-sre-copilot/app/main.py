@@ -166,3 +166,77 @@ def review_incident(incident_id: str, review: ReviewRequest):
             "SELECT * FROM incidents WHERE incident_id = ?", (incident_id,)
         ).fetchone()
     return row_to_record(updated)
+
+
+from app.diagnosis.ai_engine import diagnose_with_ai
+
+
+class DiagnosisRequest(BaseModel):
+    incident_id: str | None = None
+    title: str
+    namespace: str
+    resource_name: str
+    container_name: str
+    evidence: list[str] = Field(default_factory=list)
+    logs: list[str] = Field(default_factory=list)
+    events: list[dict] = Field(default_factory=list)
+    metrics: dict = Field(default_factory=dict)
+
+
+@app.post("/diagnose")
+def diagnose_endpoint(request: DiagnosisRequest):
+    from fastapi import HTTPException
+
+    try:
+        return diagnose_with_ai(request.model_dump())
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    except Exception:
+        raise HTTPException(
+            status_code=502,
+            detail="AI diagnosis request failed. Check server logs and API configuration.",
+        )
+
+
+from app.diagnosis.k8s_collector import collect_pod_evidence
+
+
+class LiveDiagnosisRequest(BaseModel):
+    namespace: str
+    pod_name: str
+
+
+@app.post("/diagnose/live")
+def diagnose_live_endpoint(request: LiveDiagnosisRequest):
+    try:
+        evidence = collect_pod_evidence(
+            namespace=request.namespace,
+            pod_name=request.pod_name,
+        )
+        incident = {
+            "title": f"Live Kubernetes diagnosis for pod {request.pod_name}",
+            "namespace": request.namespace,
+            "resource_name": request.pod_name,
+            "container_name": "See collected container evidence",
+            "evidence": [
+                "The following evidence was collected from the live Kubernetes API.",
+                "Distinguish confirmed facts from hypotheses.",
+            ],
+            "live_kubernetes_evidence": evidence,
+        }
+        diagnosis = diagnose_with_ai(incident)
+        return {
+            "evidence_source": "live Kubernetes API",
+            "collected_evidence": evidence,
+            "diagnosis": diagnosis,
+        }
+    except Exception:
+        import logging
+        logging.exception("Live Kubernetes diagnosis failed")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Live diagnosis failed. Check server logs, Kubernetes access, "
+                "pod permissions, and OpenAI API configuration."
+            ),
+        )

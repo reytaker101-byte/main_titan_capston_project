@@ -1,0 +1,20 @@
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+*.db
+
+# Local backups
+../ai-sre-copilot-backup-before-k8s/
+
+# Environment and secret files
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python virtual environments
+venv/
+ENV/
