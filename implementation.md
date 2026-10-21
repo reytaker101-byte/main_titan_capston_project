@@ -630,6 +630,490 @@ ERROR:    Application startup failed. Exiting.
 (.venv) admin@NewLearning#
 
 
+cd ~/main_titan_capston_project/ai-sre-copilot
+vi Dockerfile
+"FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/data \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]"
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && docker build -t ai-sre-copilot:dev . && docker rm -f ai-sre-copilot-test && docker run -d --name ai-sre-copilot-test -p 8000:8000 ai-sre-copilot:dev
+[+] Building 1.8s (12/12) FINISHED        docker:desktop-linux
+ => [internal] load build definition from Dockerfile      0.0s
+ => => transferring dockerfile: 436B                      0.0s
+ => [internal] load metadata for docker.io/library/pytho  1.4s
+ => [auth] library/python:pull token for registry-1.dock  0.0s
+ => [internal] load .dockerignore                         0.0s
+ => => transferring context: 2B                           0.0s
+ => [1/6] FROM docker.io/library/python:3.12-slim@sha256  0.0s
+ => => resolve docker.io/library/python:3.12-slim@sha256  0.0s
+ => [internal] load build context                         0.0s
+ => => transferring context: 274B                         0.0s
+ => CACHED [2/6] WORKDIR /app                             0.0s
+ => CACHED [3/6] COPY requirements.txt .                  0.0s
+ => CACHED [4/6] RUN pip install --no-cache-dir -r requi  0.0s
+ => CACHED [5/6] COPY app ./app                           0.0s
+ => [6/6] RUN useradd --create-home --uid 10001 appuser   0.2s
+ => exporting to image                                    0.1s
+ => => exporting layers                                   0.0s
+ => => exporting manifest sha256:60c857ffb804184dffe9647  0.0s
+ => => exporting config sha256:cd1081f5c9455071db32b0c02  0.0s
+ => => exporting attestation manifest sha256:3e28f2e476c  0.0s
+ => => exporting manifest list sha256:018b4b842fda253051  0.0s
+ => => naming to docker.io/library/ai-sre-copilot:dev     0.0s
+ => => unpacking to docker.io/library/ai-sre-copilot:dev  0.0s
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/f2zjwbm8vcetq2bg3n4ernrms
+ai-sre-copilot-test
+30c88ca36273a4b42b8dcfc81bea74fdf29bb1db13f5eac6bb5b943dea8469a9
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#sleep 2 && curl -i http://localhost:8000/health
+HTTP/1.1 200 OK
+date: Wed, 21 Oct 2026 03:51:46 GMT
+server: uvicorn
+content-length: 42
+content-type: application/json
+
+{"status":"ok","service":"ai-sre-copilot"}%                    (.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#curl -s -X POST http://localhost:8000/incidents -H "Content-Type: application/json" -d '{"title":"Payment pods restarting","severity":"P2","namespace":"payment-dev","resource_name":"payment-service-green","container_name":"payment-service","evidence":["Local container smoke test; no real cluster evidence"],"proposed_fix":"Inspect Kubernetes events and metrics before proposing a YAML change.","risk":"An unverified resource change may not fix the incident.","rollback_plan":"Revert the approved Git commit and verify Argo CD sync."}'
+{"title":"Payment pods restarting","severity":"P2","namespace":"payment-dev","resource_name":"payment-service-green","container_name":"payment-service","evidence":["Local container smoke test; no real cluster evidence"],"proposed_fix":"Inspect Kubernetes events and metrics before proposing a YAML change.","risk":"An unverified resource change may not fix the incident.","rollback_plan":"Revert the approved Git commit and verify Argo CD sync.","incident_id":"4537bbbf-2bda-4644-9d8d-670e3c533eb8","status":"pending","created_at":"2026-10-21T03:52:55.693465+00:00","reviewer_note":null}%                                          (.venv) admin@NewLearning#
+
+
+🔥 Incident API bhi PASS!
+
+Ab tak humne verify kiya hai:
+
+* ✅ Python automated test: 1 passed
+* ✅ Docker image successfully build hui
+* ✅ Container healthy: HTTP 200 OK
+* ✅ Incident creation: successful
+* ✅ Incident status: pending
+* 💰 GCP cluster abhi create nahi kiya
+
+Lekin yaad rahe: Yeh abhi basic incident-management API hai, AI diagnosis engine nahi.
+
+(.venv) admin@NewLearning#docker restart ai-sre-copilot-test && sleep 2 && curl -s http://localhost:8000/incidents/4537bbbf-2bda-4644-9d8d-670e3c533eb8
+ai-sre-copilot-test
+{"title":"Payment pods restarting","severity":"P2","namespace":"payment-dev","resource_name":"payment-service-green","container_name":"payment-service","evidence":["Local container smoke test; no real cluster evidence"],"proposed_fix":"Inspect Kubernetes events and metrics before proposing a YAML change.","risk":"An unverified resource change may not fix the incident.","rollback_plan":"Revert the approved Git commit and verify Argo CD sync.","incident_id":"4537bbbf-2bda-4644-9d8d-670e3c533eb8","status":"pending","created_at":"2026-10-21T03:52:55.693465+00:00","reviewer_note":null}%                                          (.venv) admin@NewLearning#
+
+Test
+
+Result
+
+Python smoke test
+
+✅ PASS
+
+Docker image build
+
+✅ PASS
+
+Container health
+
+✅ HTTP 200
+
+Incident creation
+
+✅ PASS
+
+Database persistence across container restart
+
+✅ PASS
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project && git status --short
+ M ai-sre-copilot/Dockerfile
+?? ai-sre-copilot/app/__pycache__/
+?? ai-sre-copilot/tests/__pycache__/
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#docker ps
+CONTAINER ID   IMAGE                COMMAND                  CREATED         STATUS              PORTS                                         NAMES
+30c88ca36273   ai-sre-copilot:dev   "uvicorn app.main:ap…"   4 minutes ago   Up About a minute   0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp   ai-sre-copilot-test
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project && rm -rf ai-sre-copilot/app/__pycache__ ai-sre-copilot/tests/__pycache__ && printf '\n__pycache__/\n*.py[cod]\n.pytest_cache/\n.venv/\n.env\n*.db\n' >> ai-sre-copilot/.gitignore && git status --short
+ M ai-sre-copilot/Dockerfile
+?? ai-sre-copilot/.gitignore
+(.venv) admin@NewLearning#
+
+
+Test
+
+Status
+
+FastAPI health endpoint
+
+✅ Pass
+
+Docker image build
+
+✅ Pass
+
+Container startup
+
+✅ Pass
+
+Incident create API
+
+✅ Pass
+
+SQLite persistence after restart
+
+✅ Pass
+
+Actual AI-based incident diagnosis
+
+❌ Not implemented
+
+Kubernetes events/logs analysis
+
+❌ Not implemented
+
+Prometheus metrics analysis
+
+❌ Not implemented
+
+YAML fix generation and validation
+
+❌ Not implemented
+
+GitHub PR creation
+
+❌ Not implemented
+
+Human approval → GitOps workflow
+
+❌ Not implemented
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project && grep -n -i -E "use case|root cause|diagnosis|prometheus|approval|yaml|incident" implementation.md | head -40
+7:?? .github/workflows/03-deploy-dev.yaml.pre-comments.bak
+8:?? .github/workflows/04-promote-image.yaml.pre-comments.bak
+9:?? .github/workflows/build-push.yaml.pre-comments.bak
+10:?? .github/workflows/deploy-blue-green.yaml.pre-comments.bak
+11:?? .github/workflows/deploy-gke.yaml.pre-comments.bak
+34:ai/sre_guardian/adapters/prometheus.py
+52:ai/use-cases/group-2-incident-intelligence-response/UC-04-ai-root-cause-analysis.md
+53:ai/use-cases/group-2-incident-intelligence-response/UC-05-incident-triage-response-planner.md
+54:ai/use-cases/group-2-incident-intelligence-response/UC-10-ai-operations-assistant.md
+55:ai/use-cases/group-2-incident-intelligence-response/UC-11-incident-timeline-postmortem-drafting.md
+56:ai/use-cases/group-2-incident-intelligence-response/UC-15-hybrid-retrieval-incident-memory-engine.md
+67:deploy/argocd/argocd-payment-service-application.yaml
+68:deploy/argocd/argocd-payment-service-dev.yaml
+69:deploy/argocd/argocd-payment-service-prod-fleet.yaml
+70:deploy/argocd/argocd-payment-service-prod-pilot.yaml
+71:deploy/argocd/argocd-payment-service-stage-fleet.yaml
+72:deploy/argocd/argocd-payment-service-stage-pilot.yaml
+73:deploy/environments/dev/payment-service-active-service.yaml
+74:deploy/environments/dev/payment-service-blue-deployment.yaml
+75:deploy/environments/dev/payment-service-green-deployment.yaml
+76:deploy/environments/dev/payment-service-preview-service.yaml
+77:deploy/environments/prod-fleet/payment-service-active-service.yaml
+78:deploy/environments/prod-fleet/payment-service-blue-deployment.yaml
+79:deploy/environments/prod-fleet/payment-service-green-deployment.yaml
+80:deploy/environments/prod-fleet/payment-service-preview-service.yaml
+81:deploy/environments/prod-pilot/payment-service-active-service.yaml
+82:deploy/environments/prod-pilot/payment-service-blue-deployment.yaml
+83:deploy/environments/prod-pilot/payment-service-green-deployment.yaml
+84:deploy/environments/prod-pilot/payment-service-preview-service.yaml
+85:deploy/environments/stage-fleet/payment-service-active-service.yaml
+86:deploy/environments/stage-fleet/payment-service-blue-deployment.yaml
+87:deploy/environments/stage-fleet/payment-service-green-deployment.yaml
+88:deploy/environments/stage-fleet/payment-service-preview-service.yaml
+89:deploy/environments/stage-pilot/payment-service-active-service.yaml
+90:deploy/environments/stage-pilot/payment-service-blue-deployment.yaml
+91:deploy/environments/stage-pilot/payment-service-green-deployment.yaml
+92:deploy/environments/stage-pilot/payment-service-preview-service.yaml
+93:deploy/payment-service/payment-service-active-service.yaml
+94:deploy/payment-service/payment-service-blue-deployment.yaml
+95:deploy/payment-service/payment-service-green-deployment.yaml
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project && tail -40 ai-sre-copilot/app/main.py
+    return [row_to_record(row) for row in rows]
+
+
+@app.get("/incidents/{incident_id}", response_model=IncidentRecord)
+def get_incident(incident_id: str):
+    with closing(connect_db()) as conn:
+        row = conn.execute(
+            "SELECT * FROM incidents WHERE incident_id = ?", (incident_id,)
+        ).fetchone()
+    record = row_to_record(row)
+    if not record:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return record
+
+
+@app.post("/incidents/{incident_id}/review", response_model=IncidentRecord)
+def review_incident(incident_id: str, review: ReviewRequest):
+    if review.decision == ApprovalStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Cannot review to pending")
+
+    # Review records a decision only; it never triggers deployment.
+    with closing(connect_db()) as conn:
+        row = conn.execute(
+            "SELECT * FROM incidents WHERE incident_id = ?", (incident_id,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        if row["status"] != ApprovalStatus.PENDING.value:
+            raise HTTPException(
+                status_code=409, detail=f"Incident already reviewed: {row['status']}"
+            )
+        conn.execute(
+            "UPDATE incidents SET status = ?, reviewer_note = ? WHERE incident_id = ?",
+            (review.decision.value, review.reviewer_note, incident_id),
+        )
+        conn.commit()
+        updated = conn.execute(
+            "SELECT * FROM incidents WHERE incident_id = ?", (incident_id,)
+        ).fetchone()
+    return row_to_record(updated)
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && mkdir -p app/diagnosis
+(.venv) admin@NewLearning#
+
+cd ~/main_titan_capston_project/ai-sre-copilot && cat > app/diagnosis/engine.py <<'PY'
+from typing import Any
+
+
+def diagnose(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Analyze supplied Kubernetes event samples.
+    Only report causes supported by the supplied evidence.
+    This function does not connect to or modify a cluster.
+    """
+    if not events:
+        return {
+            "diagnosis": "Insufficient evidence",
+            "confidence": "low",
+            "evidence": [],
+            "recommended_action": "Collect pod events, container logs, and resource metrics.",
+            "proposed_yaml": None,
+            "risk": "Changing resources without evidence may not resolve the incident.",
+            "rollback_plan": "No change has been made; no rollback is required.",
+        }
+
+    evidence = [str(event.get("message", "")) for event in events]
+    combined = " ".join(evidence).lower()
+
+    if any(term in combined for term in ["oomkilled", "out of memory", "reason: oom"]):
+        return {
+            "diagnosis": "Container likely exceeded its memory limit",
+            "confidence": "medium",
+            "evidence": evidence,
+            "recommended_action": (
+                "Verify the container's last termination reason and memory usage "
+                "before changing its memory limit."
+            ),
+            "proposed_yaml": None,
+            "risk": (
+                "Increasing memory limits without checking actual usage may "
+                "increase resource consumption and still not fix the cause."
+            ),
+            "rollback_plan": (
+                "If a later approved change causes issues, revert its Git commit "
+                "and verify Argo CD sync."
+            ),
+        }
+
+    if any(term in combined for term in ["failedscheduling", "insufficient cpu", "insufficient memory"]):
+        return {
+            "diagnosis": "Pod scheduling may be blocked by insufficient cluster resources",
+            "confidence": "medium",
+            "evidence": evidence,
+            "recommended_action": (
+                "Check node allocatable capacity, pod requests, and scheduler events."
+            ),
+            "proposed_yaml": None,
+            "risk": (
+                "Reducing requests without capacity analysis can cause performance "
+                "degradation; increasing them may make scheduling harder."
+            ),
+            "rollback_plan": (
+                "If a later approved change causes issues, revert its Git commit "
+                "and verify Argo CD sync."
+            ),
+        }
+
+    if any(term in combined for term in ["back-off restarting failed container", "crashloopbackoff"]):
+        return {
+            "diagnosis": "Container is repeatedly failing; root cause is not established",
+            "confidence": "low",
+            "evidence": evidence,
+            "recommended_action": (
+                "Inspect previous container logs, termination exit code, and pod events."
+            ),
+            "proposed_yaml": None,
+            "risk": (
+                "Changing CPU or memory settings without the termination details "
+                "may not resolve the failure."
+            ),
+            "rollback_plan": (
+                "No change has been made; if a later approved change is applied, "
+                "revert its Git commit and verify Argo CD sync."
+            ),
+        }
+
+    return {
+        "diagnosis": "No supported root cause identified",
+        "confidence": "low",
+        "evidence": evidence,
+        "recommended_action": (
+            "Collect relevant pod events, previous container logs, and resource metrics."
+        ),
+        "proposed_yaml": None,
+        "risk": "Evidence is insufficient to recommend a specific configuration change.",
+        "rollback_plan": "No change has been made; no rollback is required.",
+    }
+PY
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && source .venv/bin/activate && pip install openai
+Collecting openai
+  Downloading openai-3.35.1-py3-none-any.whl.metadata (44 kB)
+Requirement already satisfied: anyio<5,>=4.10.0 in ./.venv/lib/python3.14/site-packages (from openai) (4.15.1)
+Collecting httpx2<3,>=2.12.0 (from openai)
+  Downloading httpx2-2.15.1-py3-none-any.whl.metadata (9.6 kB)
+Collecting jiter<1,>=0.16.0 (from openai)
+  Using cached jiter-0.17.0-cp314-cp314-macosx_11_0_arm64.whl.metadata (5.2 kB)
+Requirement already satisfied: pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,<3,>=1.10.13 in ./.venv/lib/python3.14/site-packages (from openai) (2.14.1)
+Collecting sniffio (from openai)
+  Using cached sniffio-1.3.1-py3-none-any.whl.metadata (3.9 kB)
+Requirement already satisfied: typing-extensions<5,>=4.14 in ./.venv/lib/python3.14/site-packages (from openai) (4.16.0)
+Requirement already satisfied: idna>=2.8 in ./.venv/lib/python3.14/site-packages (from anyio<5,>=4.10.0->openai) (3.20)
+Collecting httpcore2==2.15.1 (from httpx2<3,>=2.12.0->openai)
+  Downloading httpcore2-2.15.1-py3-none-any.whl.metadata (27 kB)
+Collecting truststore>=0.10 (from httpx2<3,>=2.12.0->openai)
+  Downloading truststore-0.10.5-py3-none-any.whl.metadata (4.5 kB)
+Requirement already satisfied: h11>=0.16 in ./.venv/lib/python3.14/site-packages (from httpcore2==2.15.1->httpx2<3,>=2.12.0->openai) (0.16.0)
+Requirement already satisfied: annotated-types>=0.6.0 in ./.venv/lib/python3.14/site-packages (from pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,<3,>=1.10.13->openai) (0.8.0)
+Requirement already satisfied: pydantic-core==2.50.1 in ./.venv/lib/python3.14/site-packages (from pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,<3,>=1.10.13->openai) (2.50.1)
+Requirement already satisfied: typing-inspection>=0.4.4 in ./.venv/lib/python3.14/site-packages (from pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,<3,>=1.10.13->openai) (0.4.4)
+Downloading openai-3.35.1-py3-none-any.whl (2.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.3/2.3 MB 46.5 MB/s  0:00:00
+Downloading httpx2-2.15.1-py3-none-any.whl (96 kB)
+Downloading httpcore2-2.15.1-py3-none-any.whl (85 kB)
+Using cached jiter-0.17.0-cp314-cp314-macosx_11_0_arm64.whl (321 kB)
+Downloading truststore-0.10.5-py3-none-any.whl (19 kB)
+Using cached sniffio-1.3.1-py3-none-any.whl (10 kB)
+Installing collected packages: truststore, sniffio, jiter, httpcore2, httpx2, openai
+Successfully installed httpcore2-2.15.1 httpx2-2.15.1 jiter-0.17.0 openai-3.35.1 sniffio-1.3.1 truststore-0.10.5
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && read -s "OPENAI_API_KEY?Paste your OpenAI API key: " && echo && export OPENAI_API_KEY
+Paste your OpenAI API key: 
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#if [ -n "$OPENAI_API_KEY" ]; then echo "API key is set"; else echo "API key is NOT set"; fi
+API key is set
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && cat > app/diagnosis/ai_engine.py <<'PY'
+import json
+import os
+
+from openai import OpenAI
+
+
+SYSTEM_PROMPT = """
+You are an experienced Site Reliability Engineering (SRE) incident analyst.
+
+Analyze the incident evidence provided by the caller. Do not assume the cause
+is known in advance and do not limit your analysis to a predefined issue list.
+
+Requirements:
+- Identify one or more plausible root causes supported by the evidence.
+- Separate confirmed observations from hypotheses.
+- Cite the exact evidence supporting each hypothesis.
+- State confidence and explain uncertainty.
+- Identify conflicting signals and missing evidence.
+- Recommend the next diagnostic checks when evidence is insufficient.
+- Suggest a minimal Kubernetes YAML patch only when evidence supports it.
+- Never invent cluster names, resources, metrics, logs, or events.
+- Never claim that you queried a live cluster or applied a change.
+- Include risks and a rollback recommendation.
+- Do not execute commands or deploy changes.
+
+Return a JSON object with:
+summary, findings, supporting_evidence, missing_evidence,
+recommended_checks, proposed_yaml, risks, rollback_plan.
+"""
+
+
+def diagnose_with_ai(incident: dict) -> dict:
+    if not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+
+    client = OpenAI()
+
+    response = client.responses.create(
+        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        instructions=SYSTEM_PROMPT,
+        input=json.dumps(incident),
+    )
+
+    try:
+        result = json.loads(response.output_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("AI returned an invalid JSON response") from exc
+
+    if not isinstance(result, dict):
+        raise RuntimeError("AI response must be a JSON object")
+
+    return result
+PY
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && cat >> app/main.py <<'PY'
+
+
+from app.diagnosis.ai_engine import diagnose_with_ai
+
+
+class DiagnosisRequest(BaseModel):
+    incident_id: str | None = None
+    title: str
+    namespace: str
+    resource_name: str
+    container_name: str
+    evidence: list[str] = Field(default_factory=list)
+    logs: list[str] = Field(default_factory=list)
+    events: list[dict] = Field(default_factory=list)
+    metrics: dict = Field(default_factory=dict)
+
+
+@app.post("/diagnose")
+def diagnose_endpoint(request: DiagnosisRequest):
+    from fastapi import HTTPException
+
+    try:
+        return diagnose_with_ai(request.model_dump())
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    except Exception:
+        raise HTTPException(
+            status_code=502,
+            detail="AI diagnosis request failed. Check server logs and API configuration.",
+        )
+PY
+(.venv) admin@NewLearning#
+
 
 
 
