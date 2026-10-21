@@ -1549,6 +1549,460 @@ app/main.py:83
 5 passed, 2 warnings in 0.61s
 (.venv) admin@NewLearning#
 
+(.venv) admin@NewLearning#cat requirements.txt
+fastapi
+uvicorn[standard]
+pydantic
+PyYAML
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#echo 'openai' >> requirements.txt
+(.venv) admin@NewLearning#cat requirements.txt
+fastapi
+uvicorn[standard]
+pydantic
+PyYAML
+openai
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#python -c "from openai import OpenAI; print('OpenAI SDK OK')"
+OpenAI SDK OK
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#if [ -n "$OPENAI_API_KEY" ]; then echo "API key configured"; else echo "API key missing"; fi
+API key configured
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#curl -sS -w '\nHTTP Status: %{http_code}\n' \
+  -X POST http://127.0.0.1:8000/diagnose \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Payment service pods restarting frequently",
+    "namespace": "payment-dev",
+    "resource_name": "payment-service-green",
+    "container_name": "payment-service",
+    "evidence": [
+      "Deployment requests 100m CPU and 128Mi memory",
+      "Actual CPU and memory usage is unknown",
+      "Repeated pod restarts have been reported, but no Kubernetes events are available"
+    ],
+    "logs": [],
+    "events": [],
+    "metrics": {}
+  }'
+{"detail":"Not Found"}
+HTTP Status: 404
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#docker ps --filter "publish=8000" --format "table {{.Names}}\t{{.Image}}\t{{.Ports}}"
+NAMES                 IMAGE                PORTS
+ai-sre-copilot-test   ai-sre-copilot:dev   0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && docker build -t ai-sre-copilot:dev .
+[+] Building 12.0s (12/12) FINISHED       docker:desktop-linux
+ => [internal] load build definition from Dockerfile      0.0s
+ => => transferring dockerfile: 436B                      0.0s
+ => [internal] load metadata for docker.io/library/pytho  1.9s
+ => [auth] library/python:pull token for registry-1.dock  0.0s
+ => [internal] load .dockerignore                         0.0s
+ => => transferring context: 2B                           0.0s
+ => [1/6] FROM docker.io/library/python:3.12-slim@sha256  0.0s
+ => => resolve docker.io/library/python:3.12-slim@sha256  0.0s
+ => [internal] load build context                         0.0s
+ => => transferring context: 31.66kB                      0.0s
+ => CACHED [2/6] WORKDIR /app                             0.0s
+ => [3/6] COPY requirements.txt .                         0.0s
+ => [4/6] RUN pip install --no-cache-dir -r requirements  6.9s
+ => [5/6] COPY app ./app                                  0.0s 
+ => [6/6] RUN useradd --create-home --uid 10001 appuser   0.1s 
+ => exporting to image                                    2.9s 
+ => => exporting layers                                   2.3s 
+ => => exporting manifest sha256:e763877d661510f2e283835  0.0s 
+ => => exporting config sha256:82c0f29ea77be3c1b084d1911  0.0s 
+ => => exporting attestation manifest sha256:519d8cbe1a9  0.0s
+ => => exporting manifest list sha256:41ea96ae989bad070e  0.0s
+ => => naming to docker.io/library/ai-sre-copilot:dev     0.0s
+ => => unpacking to docker.io/library/ai-sre-copilot:dev  0.6s
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/q1tzeus2wtwlqbp3d8jkhmfwz
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#sleep 2 && curl -i http://localhost:8000/health
+HTTP/1.1 200 OK
+date: Wed, 21 Oct 2026 04:50:42 GMT
+server: uvicorn
+content-length: 42
+content-type: application/json
+
+{"status":"ok","service":"ai-sre-copilot"}%                    (.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#curl -s http://localhost:8000/openapi.json | python -c 'import json,sys; d=json.load(sys.stdin); print("\n".join(d["paths"].keys()))'
+
+zsh: parse error near `admin@NewLearning#sl...'
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#curl -s http://localhost:8000/openapi.json | python -c 'import json,sys; print("\n".join(json.load(sys.stdin)["paths"].keys()))'
+/health
+/incidents
+/incidents/{incident_id}
+/incidents/{incident_id}/review
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && grep -nE 'diagnose_endpoint|@app.post\("/diagnose"\)|diagnose_with_ai' app/main.py
+171:from app.diagnosis.ai_engine import diagnose_with_ai
+186:@app.post("/diagnose")
+187:def diagnose_endpoint(request: DiagnosisRequest):
+191:        return diagnose_with_ai(request.model_dump())
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && cat Dockerfile && echo "----- DOCKER IGNORE -----" && cat .dockerignore 2>/dev/null || echo "No .dockerignore file"
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/data \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+----- DOCKER IGNORE -----
+No .dockerignore file
+
+(.venv) admin@NewLearning#docker exec ai-sre-copilot-test sh -c 'grep -nE "diagnose_endpoint|/diagnose|diagnose_with_ai" /app/app/main.py; echo "----- AI ENGINE FILE -----"; ls -l /app/app/diagnosis/'
+----- AI ENGINE FILE -----
+ls: cannot access '/app/app/diagnosis/': No such file or directory
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && find app -maxdepth 3 -type f | sort
+app/__init__.py
+app/__pycache__/__init__.cpython-314.pyc
+app/__pycache__/main.cpython-314.pyc
+app/diagnosis/__pycache__/ai_engine.cpython-314.pyc
+app/diagnosis/__pycache__/engine.cpython-314.pyc
+app/diagnosis/ai_engine.py
+app/diagnosis/engine.py
+app/main.py
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && docker build --no-cache --progress=plain -t ai-sre-copilot:dev . 2>&1 | grep -E 'load build context|transferring context|COPY app|ERROR|FINISHED'
+#4 transferring context: 2B done
+#7 [internal] load build context
+#7 transferring context: 580B done
+#10 [5/6] COPY app ./app
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && ls -la && find . -maxdepth 2 -name '*dockerignore*' -o -name '.gitignore' && git check-ignore -v app/main.py app/diagnosis/ai_engine.py
+total 32
+drwxr-xr-x  10 dollyd  staff   320 21 Oct 09:25 .
+drwxr-xr-x  10 dollyd  staff   320 21 Oct 09:07 ..
+-rw-r--r--   1 dollyd  staff    56 21 Oct 09:25 .gitignore
+drwxr-xr-x   6 dollyd  staff   192 21 Oct 09:12 .pytest_cache
+drwxr-xr-x   7 dollyd  staff   224 21 Oct 08:25 .venv
+drwxr-xr-x   6 dollyd  staff   192 21 Oct 09:37 app
+-rw-r--r--   1 dollyd  staff   397 21 Oct 09:19 Dockerfile
+-rw-r--r--   1 dollyd  staff  1097 21 Oct 09:07 README.md
+-rw-r--r--   1 dollyd  staff    49 21 Oct 10:03 requirements.txt
+drwxr-xr-x   6 dollyd  staff   192 21 Oct 10:01 tests
+./.pytest_cache/.gitignore
+./.gitignore
+./.venv/.gitignore
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && echo "----- Docker ignore files -----" && find .. -name '.dockerignore' -print && echo "----- Docker build config -----" && docker buildx inspect
+----- Docker ignore files -----
+----- Docker build config -----
+Name:          serene_euler
+Driver:        docker-container
+Last Activity: 2026-09-07 10:48:57 +0000 UTC
+
+Nodes:
+Name:                  serene_euler0
+Endpoint:              desktop-linux
+Status:                inactive
+BuildKit daemon flags: --allow-insecure-entitlement=network.host
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && echo "----- Main file size -----" && wc -c app/main.py app/diagnosis/ai_engine.py Dockerfile requirements.txt && echo "----- Docker build context test -----" && docker build --no-cache --progress=plain -t ai-sre-copilot:dev . 2>&1 | grep -E 'transferring context|COPY app|ERROR|exporting to image'
+----- Main file size -----
+    6312 app/main.py
+    1758 app/diagnosis/ai_engine.py
+     397 Dockerfile
+      49 requirements.txt
+    8516 total
+----- Docker build context test -----
+#4 transferring context: 2B done
+#5 transferring context: 580B done
+#10 [5/6] COPY app ./app
+#12 exporting to image
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && echo "----- Docker CLI version -----" && docker version && echo "----- Docker context -----" && docker context show && echo "----- BuildKit environment -----" && env | grep -iE 'DOCKER|BUILDKIT' | sed -E 's/(TOKEN|PASSWORD|KEY)=.*/\1=[REDACTED]/I'
+----- Docker CLI version -----
+Client: Docker Engine - Community
+ Version:           29.3.1
+ API version:       1.51 (downgraded from 1.54)
+ Go version:        go1.26.1
+ Git commit:        c2be9ccfc3
+ Built:             Wed Mar 25 14:22:32 2026
+ OS/Arch:           darwin/arm64
+ Context:           desktop-linux
+
+Server: Docker Desktop 4.46.0 (204649)
+ Engine:
+  Version:          28.4.0
+  API version:      1.51 (minimum version 1.24)
+  Go version:       go1.24.7
+  Git commit:       249d679
+  Built:            Wed Sep  3 20:58:53 2025
+  OS/Arch:          linux/arm64
+  Experimental:     false
+ containerd:
+  Version:          1.7.27
+  GitCommit:        05044ec0a9a75232cad458027ca83437aae3f4da
+ runc:
+  Version:          1.2.5
+  GitCommit:        v1.2.5-0-g59923ef
+ docker-init:
+  Version:          0.19.0
+  GitCommit:        de40ad0
+----- Docker context -----
+desktop-linux
+----- BuildKit environment -----
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && echo "----- Main file size -----" && wc -c app/main.py app/diagnosis/ai_engine.py Dockerfile requirements.txt && echo "----- Docker build context test -----" && docker build --no-cache --progress=plain -t ai-sre-copilot:dev . 2>&1 | grep -E 'transferring context|COPY app|ERROR|exporting to image'
+----- Main file size -----
+    6312 app/main.py
+    1758 app/diagnosis/ai_engine.py
+     397 Dockerfile
+      49 requirements.txt
+    8516 total
+----- Docker build context test -----
+#4 transferring context: 2B done
+#5 transferring context: 580B done
+#10 [5/6] COPY app ./app
+#12 exporting to image
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && echo "----- Docker CLI version -----" && docker version && echo "----- Docker context -----" && docker context show && echo "----- BuildKit environment -----" && env | grep -iE 'DOCKER|BUILDKIT' | sed -E 's/(TOKEN|PASSWORD|KEY)=.*/\1=[REDACTED]/I'
+----- Docker CLI version -----
+Client: Docker Engine - Community
+ Version:           29.3.1
+ API version:       1.51 (downgraded from 1.54)
+ Go version:        go1.26.1
+ Git commit:        c2be9ccfc3
+ Built:             Wed Mar 25 14:22:32 2026
+ OS/Arch:           darwin/arm64
+ Context:           desktop-linux
+
+Server: Docker Desktop 4.46.0 (204649)
+ Engine:
+  Version:          28.4.0
+  API version:      1.51 (minimum version 1.24)
+  Go version:       go1.24.7
+  Git commit:       249d679
+  Built:            Wed Sep  3 20:58:53 2025
+  OS/Arch:          linux/arm64
+  Experimental:     false
+ containerd:
+  Version:          1.7.27
+  GitCommit:        05044ec0a9a75232cad458027ca83437aae3f4da
+ runc:
+  Version:          1.2.5
+  GitCommit:        v1.2.5-0-g59923ef
+ docker-init:
+  Version:          0.19.0
+  GitCommit:        de40ad0
+----- Docker context -----
+desktop-linux
+----- BuildKit environment -----
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && echo "----- Ignore rules -----" && cat .gitignore && echo "----- Dockerfile-specific ignore files -----" && find . -maxdepth 2 -type f -iname '*dockerfile*' -o -iname '*dockerignore*' && echo "----- Build context without BuildKit -----" && DOCKER_BUILDKIT=0 docker build --no-cache -t ai-sre-copilot:debug .
+----- Ignore rules -----
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+*.db
+----- Dockerfile-specific ignore files -----
+./Dockerfile
+----- Build context without BuildKit -----
+DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
+            BuildKit is currently disabled; enable it by removing the DOCKER_BUILDKIT=0
+            environment-variable.
+
+Sending build context to Docker daemon  79.17MB
+Step 1/10 : FROM python:3.12-slim
+3.12-slim: Pulling from library/python
+Digest: sha256:2259debdc6af85626058a15a7bf44ad6a68b8c98c9ae82a02cf5cdb92f096d47
+Status: Downloaded newer image for python:3.12-slim
+ ---> 2259debdc6af
+Step 2/10 : ENV PYTHONDONTWRITEBYTECODE=1     PYTHONUNBUFFERED=1
+ ---> Running in e7d0d690e618
+ ---> Removed intermediate container e7d0d690e618
+ ---> b0d3eadd9b2c
+Step 3/10 : WORKDIR /app
+ ---> Running in 97db49b4e37a
+ ---> Removed intermediate container 97db49b4e37a
+ ---> bc8c5056afdb
+Step 4/10 : COPY requirements.txt .
+ ---> cbfc2e62d6e4
+Step 5/10 : RUN pip install --no-cache-dir -r requirements.txt
+ ---> Running in 55f65f1b32ea
+Collecting fastapi (from -r requirements.txt (line 1))
+  Downloading fastapi-0.156.4-py3-none-any.whl.metadata (26 kB)
+Collecting pydantic (from -r requirements.txt (line 3))
+  Downloading pydantic-2.14.1-py3-none-any.whl.metadata (133 kB)
+Collecting PyYAML (from -r requirements.txt (line 4))
+  Downloading pyyaml-6.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl.metadata (2.4 kB)
+Collecting openai (from -r requirements.txt (line 5))
+  Downloading openai-3.35.1-py3-none-any.whl.metadata (44 kB)
+Collecting uvicorn[standard] (from -r requirements.txt (line 2))
+  Downloading uvicorn-0.54.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting starlette>=0.46.0 (from fastapi->-r requirements.txt (line 1))
+  Downloading starlette-1.9.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting typing-extensions>=4.8.0 (from fastapi->-r requirements.txt (line 1))
+  Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting typing-inspection>=0.4.2 (from fastapi->-r requirements.txt (line 1))
+  Downloading typing_inspection-0.4.4-py3-none-any.whl.metadata (2.6 kB)
+Collecting annotated-doc>=0.0.2 (from fastapi->-r requirements.txt (line 1))
+  Downloading annotated_doc-0.0.5-py3-none-any.whl.metadata (6.5 kB)
+Collecting opentelemetry-api>=1.44.0 (from fastapi->-r requirements.txt (line 1))
+  Downloading opentelemetry_api-1.45.1-py3-none-any.whl.metadata (1.4 kB)
+Collecting click>=7.0 (from uvicorn[standard]->-r requirements.txt (line 2))
+  Downloading click-8.5.0-py3-none-any.whl.metadata (2.6 kB)
+Collecting h11>=0.8 (from uvicorn[standard]->-r requirements.txt (line 2))
+  Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Collecting httptools>=0.8.0 (from uvicorn[standard]->-r requirements.txt (line 2))
+  Downloading httptools-0.9.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl.metadata (3.5 kB)
+Collecting python-dotenv>=0.13 (from uvicorn[standard]->-r requirements.txt (line 2))
+  Downloading python_dotenv-1.2.4-py3-none-any.whl.metadata (29 kB)
+Collecting uvloop>=0.15.1 (from uvicorn[standard]->-r requirements.txt (line 2))
+  Downloading uvloop-0.23.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl.metadata (5.1 kB)
+Collecting watchfiles>=0.20 (from uvicorn[standard]->-r requirements.txt (line 2))
+  Downloading watchfiles-1.3.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl.metadata (4.9 kB)
+Collecting websockets>=13.0 (from uvicorn[standard]->-r requirements.txt (line 2))
+  Downloading websockets-17.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl.metadata (6.3 kB)
+Collecting annotated-types>=0.6.0 (from pydantic->-r requirements.txt (line 3))
+  Downloading annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+Collecting pydantic-core==2.50.1 (from pydantic->-r requirements.txt (line 3))
+  Downloading pydantic_core-2.50.1-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl.metadata (6.5 kB)
+Collecting anyio<5,>=4.10.0 (from openai->-r requirements.txt (line 5))
+  Downloading anyio-4.15.1-py3-none-any.whl.metadata (4.7 kB)
+Collecting httpx2<3,>=2.12.0 (from openai->-r requirements.txt (line 5))
+  Downloading httpx2-2.15.1-py3-none-any.whl.metadata (9.6 kB)
+Collecting jiter<1,>=0.16.0 (from openai->-r requirements.txt (line 5))
+  Downloading jiter-0.17.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl.metadata (5.2 kB)
+Collecting sniffio (from openai->-r requirements.txt (line 5))
+  Downloading sniffio-1.3.1-py3-none-any.whl.metadata (3.9 kB)
+Collecting idna>=2.8 (from anyio<5,>=4.10.0->openai->-r requirements.txt (line 5))
+  Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+Collecting httpcore2==2.15.1 (from httpx2<3,>=2.12.0->openai->-r requirements.txt (line 5))
+  Downloading httpcore2-2.15.1-py3-none-any.whl.metadata (27 kB)
+Collecting truststore>=0.10 (from httpx2<3,>=2.12.0->openai->-r requirements.txt (line 5))
+  Downloading truststore-0.10.5-py3-none-any.whl.metadata (4.5 kB)
+Downloading fastapi-0.156.4-py3-none-any.whl (147 kB)
+Downloading pydantic-2.14.1-py3-none-any.whl (488 kB)
+Downloading pydantic_core-2.50.1-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (2.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.0/2.0 MB 60.5 MB/s eta 0:00:00
+Downloading pyyaml-6.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (775 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 775.1/775.1 kB 71.3 MB/s eta 0:00:00
+Downloading openai-3.35.1-py3-none-any.whl (2.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.3/2.3 MB 7.7 MB/s eta 0:00:00
+Downloading annotated_doc-0.0.5-py3-none-any.whl (5.3 kB)
+Downloading annotated_types-0.8.0-py3-none-any.whl (13 kB)
+Downloading anyio-4.15.1-py3-none-any.whl (132 kB)
+Downloading click-8.5.0-py3-none-any.whl (125 kB)
+Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+Downloading httptools-0.9.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (549 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 549.2/549.2 kB 33.8 MB/s eta 0:00:00
+Downloading httpx2-2.15.1-py3-none-any.whl (96 kB)
+Downloading httpcore2-2.15.1-py3-none-any.whl (85 kB)
+Downloading jiter-0.17.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (341 kB)
+Downloading opentelemetry_api-1.45.1-py3-none-any.whl (60 kB)
+Downloading python_dotenv-1.2.4-py3-none-any.whl (23 kB)
+Downloading starlette-1.9.0-py3-none-any.whl (80 kB)
+Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Downloading typing_inspection-0.4.4-py3-none-any.whl (14 kB)
+Downloading uvloop-0.23.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (4.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.4/4.4 MB 33.6 MB/s eta 0:00:00
+Downloading watchfiles-1.3.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (454 kB)
+Downloading websockets-17.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (227 kB)
+Downloading sniffio-1.3.1-py3-none-any.whl (10 kB)
+Downloading uvicorn-0.54.0-py3-none-any.whl (87 kB)
+Downloading idna-3.20-py3-none-any.whl (69 kB)
+Downloading truststore-0.10.5-py3-none-any.whl (19 kB)
+Installing collected packages: websockets, uvloop, typing-extensions, truststore, sniffio, PyYAML, python-dotenv, jiter, idna, httptools, h11, click, annotated-types, annotated-doc, uvicorn, typing-inspection, pydantic-core, opentelemetry-api, httpcore2, anyio, watchfiles, starlette, pydantic, httpx2, openai, fastapi
+Successfully installed PyYAML-6.0.3 annotated-doc-0.0.5 annotated-types-0.8.0 anyio-4.15.1 click-8.5.0 fastapi-0.156.4 h11-0.16.0 httpcore2-2.15.1 httptools-0.9.0 httpx2-2.15.1 idna-3.20 jiter-0.17.0 openai-3.35.1 opentelemetry-api-1.45.1 pydantic-2.14.1 pydantic-core-2.50.1 python-dotenv-1.2.4 sniffio-1.3.1 starlette-1.9.0 truststore-0.10.5 typing-extensions-4.16.0 typing-inspection-0.4.4 uvicorn-0.54.0 uvloop-0.23.0 watchfiles-1.3.0 websockets-17.3
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+
+[notice] A new release of pip is available: 25.0.1 -> 26.2.2
+[notice] To update, run: pip install --upgrade pip
+ ---> Removed intermediate container 55f65f1b32ea
+ ---> 9e286f5a27e3
+Step 6/10 : COPY app ./app
+ ---> 7d5d38ace152
+Step 7/10 : RUN useradd --create-home --uid 10001 appuser     && mkdir -p /app/data     && chown -R appuser:appuser /app
+ ---> Running in ce197cff0be1
+ ---> Removed intermediate container ce197cff0be1
+ ---> bfa9139c6307
+Step 8/10 : USER appuser
+ ---> Running in 68e1b42441c4
+ ---> Removed intermediate container 68e1b42441c4
+ ---> b41739979a43
+Step 9/10 : EXPOSE 8000
+ ---> Running in 96292b4a1ac6
+ ---> Removed intermediate container 96292b4a1ac6
+ ---> c6712976ad80
+Step 10/10 : CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ ---> Running in a444cc231bb5
+ ---> Removed intermediate container a444cc231bb5
+ ---> 4ae04d5366fd
+Successfully built 4ae04d5366fd
+Successfully tagged ai-sre-copilot:debug
+(.venv) admin@NewLearning#x
+
+(.venv) admin@NewLearning#docker run --rm --entrypoint sh ai-sre-copilot:debug -c 'echo "----- Main file -----"; grep -n "/diagnose" /app/app/main.py; echo "----- AI engine -----"; ls -l /app/app/diagnosis/ai_engine.py; echo "----- Available routes -----"; python -c "from app.main import app; print(*[r.path for r in app.routes], sep=\"\n\")"'
+----- Main file -----
+186:@app.post("/diagnose")
+----- AI engine -----
+-rw-r--r-- 1 appuser appuser 1758 Oct 21 04:16 /app/app/diagnosis/ai_engine.py
+----- Available routes -----
+/openapi.json
+/docs
+/docs/oauth2-redirect
+/redoc
+/health
+/incidents
+/incidents
+/incidents/{incident_id}
+/incidents/{incident_id}/review
+/diagnose
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#docker ps -a --filter "name=ai-sre-copilot-test"
+CONTAINER ID   IMAGE          COMMAND                  CREATED       STATUS             PORTS                                         NAMES
+30c88ca36273   018b4b842fda   "uvicorn app.main:ap…"   2 hours ago   Up About an hour   0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp   ai-sre-copilot-test
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#docker inspect ai-sre-copilot-test --format 'Image={{.Config.Image}} | Ports={{json .HostConfig.PortBindings}} | Restart={{.HostConfig.RestartPolicy.Name}}'
+Image=ai-sre-copilot:dev | Ports={"8000/tcp":[{"HostIp":"","HostPort":"8000"}]} | Restart=no
+
+
 
 
 
