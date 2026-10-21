@@ -380,6 +380,225 @@ Hum yeh sequence follow karenge:
 
 Abhi GCP par kuch create mat karna. Cluster ki zaroorat minimum local tests ke liye nahi hai.
 
+(.venv) admin@NewLearning#git pull
+remote: Enumerating objects: 16, done.
+remote: Counting objects: 100% (16/16), done.
+remote: Compressing objects: 100% (11/11), done.
+remote: Total 14 (delta 3), reused 0 (delta 0), pack-reused 0 (from 0)
+Unpacking objects: 100% (14/14), 5.52 KiB | 282.00 KiB/s, done.
+From https://github.com/reytaker101-byte/main_titan_capston_project
+   d38a730..4b17e16  main       -> origin/main
+Updating d38a730..4b17e16
+error: The following untracked working tree files would be overwritten by merge:
+	ai-sre-copilot/app/main.py
+	ai-sre-copilot/requirements.txt
+Please move or remove them before you merge.
+Aborting
+(.venv) admin@NewLearning#git pull
+Updating d38a730..4b17e16
+error: The following untracked working tree files would be overwritten by merge:
+	ai-sre-copilot/app/main.py
+	ai-sre-copilot/requirements.txt
+Please move or remove them before you merge.
+Aborting
+(.venv) admin@NewLearning#git status --short
+?? ../.github/workflows/03-deploy-dev.yaml.pre-comments.bak
+?? ../.github/workflows/04-promote-image.yaml.pre-comments.bak
+?? ../.github/workflows/build-push.yaml.pre-comments.bak
+?? ../.github/workflows/deploy-blue-green.yaml.pre-comments.bak
+?? ../.github/workflows/deploy-gke.yaml.pre-comments.bak
+?? ../.workflow-backup/
+?? ./
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project && git stash push --include-untracked -m "backup local AI SRE Copilot files"
+Saved working directory and index state On main: backup local AI SRE Copilot files
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project && git pull
+Updating d38a730..4b17e16
+Fast-forward
+ ai-sre-copilot/Dockerfile          |  10 ++++
+ ai-sre-copilot/README.md           |  30 ++++++++++++
+ ai-sre-copilot/app/__init__.py     |   0
+ ai-sre-copilot/app/main.py         | 168 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ ai-sre-copilot/requirements.txt    |   4 ++
+ ai-sre-copilot/tests/test_smoke.py |  10 ++++
+ implementation.md                  |  35 ++++++++++++++
+ 7 files changed, 257 insertions(+)
+ create mode 100644 ai-sre-copilot/Dockerfile
+ create mode 100644 ai-sre-copilot/README.md
+ create mode 100644 ai-sre-copilot/app/__init__.py
+ create mode 100644 ai-sre-copilot/app/main.py
+ create mode 100644 ai-sre-copilot/requirements.txt
+ create mode 100644 ai-sre-copilot/tests/test_smoke.py
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project && git stash push --include-untracked -m "backup local AI SRE Copilot files"
+Saved working directory and index state On main: backup local AI SRE Copilot files
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project && git pull
+Updating d38a730..4b17e16
+Fast-forward
+ ai-sre-copilot/Dockerfile          |  10 ++++
+ ai-sre-copilot/README.md           |  30 ++++++++++++
+ ai-sre-copilot/app/__init__.py     |   0
+ ai-sre-copilot/app/main.py         | 168 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ ai-sre-copilot/requirements.txt    |   4 ++
+ ai-sre-copilot/tests/test_smoke.py |  10 ++++
+ implementation.md                  |  35 ++++++++++++++
+ 7 files changed, 257 insertions(+)
+ create mode 100644 ai-sre-copilot/Dockerfile
+ create mode 100644 ai-sre-copilot/README.md
+ create mode 100644 ai-sre-copilot/app/__init__.py
+ create mode 100644 ai-sre-copilot/app/main.py
+ create mode 100644 ai-sre-copilot/requirements.txt
+ create mode 100644 ai-sre-copilot/tests/test_smoke.py
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project && ls -la ai-sre-copilot
+total 24
+drwxr-xr-x   8 dollyd  staff   256 21 Oct 09:07 .
+drwxr-xr-x  10 dollyd  staff   320 21 Oct 09:07 ..
+drwxr-xr-x   7 dollyd  staff   224 21 Oct 08:25 .venv
+drwxr-xr-x   4 dollyd  staff   128 21 Oct 09:07 app
+-rw-r--r--   1 dollyd  staff   316 21 Oct 09:07 Dockerfile
+-rw-r--r--   1 dollyd  staff  1097 21 Oct 09:07 README.md
+-rw-r--r--   1 dollyd  staff    42 21 Oct 09:07 requirements.txt
+drwxr-xr-x   3 dollyd  staff    96 21 Oct 09:07 tests
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project && git status -sb
+## main...origin/main
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && source .venv/bin/activate && pip install -r requirements.txt
+Requirement already satisfied: fastapi in ./.venv/lib/python3.14/site-packages (from -r requirements.txt (line 1)) (0.156.4)
+Requirement already satisfied: pydantic in ./.venv/lib/python3.14/site-packages (from -r requirements.txt (line 3)) (2.14.1)
+Requirement already satisfied: PyYAML in ./.venv/lib/python3.14/site-packages (from -r requirements.txt (line 4)) (6.0.3)
+Requirement already satisfied: uvicorn[standard] in ./.venv/lib/python3.14/site-packages (from -r requirements.txt (line 2)) (0.54.0)
+Requirement already satisfied: starlette>=0.46.0 in ./.venv/lib/python3.14/site-packages (from fastapi->-r requirements.txt (line 1)) (1.9.0)
+Requirement already satisfied: typing-extensions>=4.8.0 in ./.venv/lib/python3.14/site-packages (from fastapi->-r requirements.txt (line 1)) (4.16.0)
+Requirement already satisfied: typing-inspection>=0.4.2 in ./.venv/lib/python3.14/site-packages (from fastapi->-r requirements.txt (line 1)) (0.4.4)
+Requirement already satisfied: annotated-doc>=0.0.2 in ./.venv/lib/python3.14/site-packages (from fastapi->-r requirements.txt (line 1)) (0.0.5)
+Requirement already satisfied: opentelemetry-api>=1.44.0 in ./.venv/lib/python3.14/site-packages (from fastapi->-r requirements.txt (line 1)) (1.45.1)
+Requirement already satisfied: click>=7.0 in ./.venv/lib/python3.14/site-packages (from uvicorn[standard]->-r requirements.txt (line 2)) (8.5.0)
+Requirement already satisfied: h11>=0.8 in ./.venv/lib/python3.14/site-packages (from uvicorn[standard]->-r requirements.txt (line 2)) (0.16.0)
+Requirement already satisfied: httptools>=0.8.0 in ./.venv/lib/python3.14/site-packages (from uvicorn[standard]->-r requirements.txt (line 2)) (0.9.0)
+Requirement already satisfied: python-dotenv>=0.13 in ./.venv/lib/python3.14/site-packages (from uvicorn[standard]->-r requirements.txt (line 2)) (1.2.4)
+Requirement already satisfied: uvloop>=0.15.1 in ./.venv/lib/python3.14/site-packages (from uvicorn[standard]->-r requirements.txt (line 2)) (0.23.0)
+Requirement already satisfied: watchfiles>=0.20 in ./.venv/lib/python3.14/site-packages (from uvicorn[standard]->-r requirements.txt (line 2)) (1.3.0)
+Requirement already satisfied: websockets>=13.0 in ./.venv/lib/python3.14/site-packages (from uvicorn[standard]->-r requirements.txt (line 2)) (17.3)
+Requirement already satisfied: annotated-types>=0.6.0 in ./.venv/lib/python3.14/site-packages (from pydantic->-r requirements.txt (line 3)) (0.8.0)
+Requirement already satisfied: pydantic-core==2.50.1 in ./.venv/lib/python3.14/site-packages (from pydantic->-r requirements.txt (line 3)) (2.50.1)
+Requirement already satisfied: anyio<5,>=4.0.0 in ./.venv/lib/python3.14/site-packages (from starlette>=0.46.0->fastapi->-r requirements.txt (line 1)) (4.15.1)
+Requirement already satisfied: idna>=2.8 in ./.venv/lib/python3.14/site-packages (from anyio<5,>=4.0.0->starlette>=0.46.0->fastapi->-r requirements.txt (line 1)) (3.20)
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && python -m pytest -q
+/Users/dollyd/main_titan_capston_project/ai-sre-copilot/.venv/bin/python: No module named pytest
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && pip install pytest httpx
+Collecting pytest
+  Downloading pytest-9.1.1-py3-none-any.whl.metadata (7.6 kB)
+Collecting httpx
+  Using cached httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+Collecting iniconfig>=1.0.1 (from pytest)
+  Downloading iniconfig-2.3.1-py3-none-any.whl.metadata (2.8 kB)
+Collecting packaging>=22 (from pytest)
+  Using cached packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+Collecting pluggy<2,>=1.5 (from pytest)
+  Downloading pluggy-1.7.0-py3-none-any.whl.metadata (5.0 kB)
+Collecting pygments>=2.7.2 (from pytest)
+  Using cached pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+Requirement already satisfied: anyio in ./.venv/lib/python3.14/site-packages (from httpx) (4.15.1)
+Collecting certifi (from httpx)
+  Downloading certifi-2026.10.19-py3-none-any.whl.metadata (2.5 kB)
+Collecting httpcore==1.* (from httpx)
+  Using cached httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+Requirement already satisfied: idna in ./.venv/lib/python3.14/site-packages (from httpx) (3.20)
+Requirement already satisfied: h11>=0.16 in ./.venv/lib/python3.14/site-packages (from httpcore==1.*->httpx) (0.16.0)
+Requirement already satisfied: typing_extensions>=4.16.0 in ./.venv/lib/python3.14/site-packages (from anyio->httpx) (4.16.0)
+Downloading pytest-9.1.1-py3-none-any.whl (386 kB)
+Downloading pluggy-1.7.0-py3-none-any.whl (27 kB)
+Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
+Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+Downloading iniconfig-2.3.1-py3-none-any.whl (7.6 kB)
+Using cached packaging-26.3-py3-none-any.whl (129 kB)
+Using cached pygments-2.21.0-py3-none-any.whl (1.3 MB)
+Downloading certifi-2026.10.19-py3-none-any.whl (136 kB)
+Installing collected packages: pygments, pluggy, packaging, iniconfig, certifi, pytest, httpcore, httpx
+Successfully installed certifi-2026.10.19 httpcore-1.0.9 httpx-0.28.1 iniconfig-2.3.1 packaging-26.3 pluggy-1.7.0 pygments-2.21.0 pytest-9.1.1
+
+(.venv) admin@NewLearning#python -m pytest -q
+.                                                       [100%]
+====================== warnings summary =======================
+.venv/lib/python3.14/site-packages/fastapi/testclient.py:1
+  /Users/dollyd/main_titan_capston_project/ai-sre-copilot/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+app/main.py:83
+  /Users/dollyd/main_titan_capston_project/ai-sre-copilot/app/main.py:83: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+.venv/lib/python3.14/site-packages/fastapi/applications.py:4723
+  /Users/dollyd/main_titan_capston_project/ai-sre-copilot/.venv/lib/python3.14/site-packages/fastapi/applications.py:4723: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 3 warnings in 0.37s
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#docker --version
+Docker version 29.3.1, build c2be9ccfc3
+(.venv) admin@NewLearning#
+
+(.venv) admin@NewLearning#cd ~/main_titan_capston_project/ai-sre-copilot && docker build -t ai-sre-copilot:dev .
+[+] Building 20.3s (12/12) FINISHED       docker:desktop-linux
+ => [internal] load build definition from Dockerfile      0.1s
+ => => transferring dockerfile: 355B                      0.0s
+ => [internal] load metadata for docker.io/library/pytho  6.3s
+ => [auth] library/python:pull token for registry-1.dock  0.0s
+ => [internal] load .dockerignore                         0.0s
+ => => transferring context: 2B                           0.0s
+ => [1/6] FROM docker.io/library/python:3.12-slim@sha256  5.7s
+ => => resolve docker.io/library/python:3.12-slim@sha256  0.0s
+ => => sha256:6e2fcafe72a4c4e812d11805d3f8f7 249B / 249B  0.3s
+ => => sha256:4dbdca1a513d31094476a7f7 12.06MB / 12.06MB  1.4s
+ => => sha256:387b25ff7b944c188f58f0e863 1.28MB / 1.28MB  2.0s
+ => => sha256:bbeda6b4abb749f743f4547e 30.20MB / 30.20MB  4.7s
+ => => extracting sha256:bbeda6b4abb749f743f4547ef5a2807  0.7s
+ => => extracting sha256:387b25ff7b944c188f58f0e8633fb93  0.0s
+ => => extracting sha256:4dbdca1a513d31094476a7f745c8278  0.3s
+ => => extracting sha256:6e2fcafe72a4c4e812d11805d3f8f7b  0.0s
+ => [internal] load build context                         0.0s
+ => => transferring context: 16.36kB                      0.0s
+ => [2/6] WORKDIR /app                                    0.2s
+ => [3/6] COPY requirements.txt .                         0.0s
+ => [4/6] RUN pip install --no-cache-dir -r requirements  5.8s
+ => [5/6] COPY app ./app                                  0.0s 
+ => [6/6] RUN useradd --create-home --uid 10001 appuser   0.1s 
+ => exporting to image                                    2.0s 
+ => => exporting layers                                   1.7s 
+ => => exporting manifest sha256:6b8c269bda7fbf02b6931a1  0.0s 
+ => => exporting config sha256:e11b4eda061f878468a46c924  0.0s 
+ => => exporting attestation manifest sha256:a9b11c1add6  0.0s
+ => => exporting manifest list sha256:fe56f297cc17e35294  0.0s
+ => => naming to docker.io/library/ai-sre-copilot:dev     0.0s
+ => => unpacking to docker.io/library/ai-sre-copilot:dev  0.3s
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/ikj9lnnor98si3byfofvrp8bh
+(.venv) admin@NewLearning#
+
+
+
+
+
 
 
 
